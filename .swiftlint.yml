@@ -1,0 +1,76 @@
+included:
+  - Sources
+  - Tests
+
+excluded:
+  - .build
+  - .swiftpm
+  - Packages
+  - docs
+  - Documentation.docc
+
+# Règles utiles et sûres
+opt_in_rules:
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - contains_over_first_not_nil
+  - empty_count
+  - explicit_init
+  - fatal_error_message
+  - first_where
+  - implicit_return
+  - joined_default_parameter
+  - legacy_random
+  - lower_acl_than_parent
+  - modifier_order
+  - operator_usage_whitespace
+  - redundant_optional_initialization   # renommée -> implicit_optional_initialization (selon versions)
+  - redundant_type_annotation
+  - sorted_imports
+  - switch_case_on_newline
+  - trailing_closure
+  - unowned_variable_capture
+  - vertical_parameter_alignment_on_call
+
+# Place 'unused_import' dans analyzer_rules (si tu utilises `swiftlint analyze`)
+analyzer_rules:
+  - unused_import
+
+# Seuils
+line_length:
+  warning: 120
+  error: 140
+  ignores_comments: true
+  ignores_interpolated_strings: true
+
+type_body_length:
+  warning: 400
+  error: 800
+
+file_length:
+  warning: 500
+  error: 1200
+
+function_body_length:
+  warning: 80
+  error: 150
+
+cyclomatic_complexity:
+  ignores_case_statements: true
+
+identifier_name:
+  min_length: 2
+  excluded: ["id","x","y","z","fd","ma","mi","mc"]
+
+disabled_rules:
+  - todo
+  - large_tuple
+  - nesting
+  - force_cast
+  - file_header
+  - trailing_whitespace
+
+reporter: "xcode"
+
+

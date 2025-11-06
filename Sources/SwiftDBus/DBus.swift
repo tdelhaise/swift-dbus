@@ -30,6 +30,6 @@ public enum DBus {
     public static func machineIdIfAvailable() -> String? {
         // M0: on évite d'ouvrir une vraie connexion ici.
         // On garde ça pour M1. Cette méthode restera un placeholder.
-        return nil
+        nil
     }
 }

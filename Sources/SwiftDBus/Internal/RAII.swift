@@ -12,10 +12,13 @@ public final class DBusMessageRef {
 
     /// Crée un DBusMessageRef à partir d'un appel C qui peut retourner nil.
     /// Jette si nil, avec un message explicite.
-    public static func wrapOrThrow(_ make: () -> OpaquePointer?, _ context: @autoclosure () -> String) throws -> DBusMessageRef {
+    public static func wrapOrThrow(_ make: @autoclosure () -> OpaquePointer?, _ context: @autoclosure () -> String)
+        throws -> DBusMessageRef {
+
         guard let msg = make() else {
-            throw DBusErrorSwift(name: "org.freedesktop.DBus.Error.Failed",
-                                 message: "Failed to create DBusMessage: \(context())")
+            throw DBusErrorSwift(
+                name: "org.freedesktop.DBus.Error.Failed",
+                message: "Failed to create DBusMessage: \(context())")
         }
         return DBusMessageRef(taking: msg)
     }
@@ -36,4 +39,3 @@ public final class DBusPendingCallRef {
         dbus_pending_call_unref(raw)
     }
 }
-

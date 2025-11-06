@@ -1,4 +1,5 @@
 import XCTest
+
 @testable import SwiftDBus
 
 final class SwiftDBusTests: XCTestCase {

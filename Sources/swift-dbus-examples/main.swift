@@ -10,4 +10,3 @@ do {
 } catch {
     print("DBus error: \(error)")
 }
-

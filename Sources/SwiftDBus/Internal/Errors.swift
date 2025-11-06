@@ -32,4 +32,3 @@ internal func withDBusError<R>(_ body: (UnsafeMutablePointer<CDbus.DBusError>) -
     }
     return result
 }
-

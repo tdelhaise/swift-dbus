@@ -8,15 +8,16 @@ public final class DBusConnection {
     }
 
     public init(sessionBus: Bool = true) throws {
-        var err = DBusError()
-        dbus_error_init(&err)
-        self.raw = sessionBus
-            ? dbus_bus_get(DBUS_BUS_SESSION, &err)
-            : dbus_bus_get(DBUS_BUS_SYSTEM, &err)
+        var error = DBusError()
+        dbus_error_init(&error)
+        self.raw =
+            sessionBus
+            ? dbus_bus_get(DBUS_BUS_SESSION, &error)
+            : dbus_bus_get(DBUS_BUS_SYSTEM, &error)
 
-        if dbus_error_is_set(&err) != 0 {
-            let message = err.message.flatMap { String(cString: $0) } ?? "unknown"
-            dbus_error_free(&err)
+        if dbus_error_is_set(&error) != 0 {
+            let message = error.message.flatMap { String(cString: $0) } ?? "unknown"
+            dbus_error_free(&error)
             throw Error.failed("dbus_bus_get failed: \(message)")
         }
         guard self.raw != nil else {
@@ -25,18 +26,17 @@ public final class DBusConnection {
     }
 
     deinit {
-        if let c = raw {
-            dbus_connection_unref(c)
+        if let connection = raw {
+            dbus_connection_unref(connection)
         }
     }
 
     public func uniqueName() throws -> String {
-        guard let c = raw else { throw Error.failed("connection is nil") }
-        if let ptr = dbus_bus_get_unique_name(c) {
-            return String(cString: ptr)
+        guard let connection = raw else { throw Error.failed("connection is nil") }
+        if let stringPointer = dbus_bus_get_unique_name(connection) {
+            return String(cString: stringPointer)
         } else {
             throw Error.failed("unique name is nil")
         }
     }
 }
-

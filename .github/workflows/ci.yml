@@ -1,4 +1,4 @@
-name: CI (Linux, container)
+name: CI (Linux)
 
 on:
   push:
@@ -7,10 +7,38 @@ on:
     branches: [ master, main ]
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-22.04          # le runner host importe peu ici
+  # --- Job 1: Ubuntu 22.04 (host) + setup-swift ---
+  linux-22_04:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install D-Bus headers
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Setup Swift 6.2
+        uses: swift-actions/setup-swift@v1
+        with:
+          swift-version: "6.2"
+
+      - name: Debug toolchain & dbus
+        run: |
+          swift --version
+          pkg-config --modversion dbus-1
+          ls -R Sources/CDbus || true
+
+      - name: Build
+        run: swift build -v
+
+      - name: Test
+        run: swift test -v
+
+  # --- Job 2: Ubuntu 24.04 (container noble) ---
+  linux-24_04-container:
+    runs-on: ubuntu-22.04           # runner hôte supporté
     container:
-      image: swift:6.2-noble       # outilchain Swift 6.2 sur Ubuntu 24.04 (noble)
+      image: swift:6.2-noble        # toolchain 6.2 sur Ubuntu 24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,6 +50,7 @@ jobs:
         run: |
           swift --version
           pkg-config --modversion dbus-1
+          ls -R Sources/CDbus || true
 
       - name: Build
         run: swift build -v

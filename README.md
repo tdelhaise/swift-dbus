@@ -1,5 +1,8 @@
 # swift-dbus
 
+[![CI (Linux)](https://github.com/tdelhaise/swift-dbus/actions/workflows/ci.yml/badge.svg)](https://github.com/tdelhaise/swift-dbus/actions/workflows/ci.yml)
+
+
 > Squelette SPM minimal pour un binding Swift de **D-Bus** sous Linux.
 > Cible : Ubuntu 24.04.3 + Swift 6.2 (installé via Swiftly).
 

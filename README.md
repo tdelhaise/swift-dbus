@@ -45,8 +45,13 @@ Vous devriez voir la version de `libdbus` ainsi qu'un indicateur de disponibilit
 
 Un workflow GitHub Actions est fourni pour builder et tester sur `ubuntu-24.04` avec Swift 6.2.
 
-## Roadmap (à adapter)
+## 🧭 Roadmap
 
-- Enveloppe Swift sûre pour : connexions (session/system), messages, bus names, introspection.
-- Intégration avec `Dispatch`/`async`/`await` et gestion fine des erreurs.
-- Couverture de test + exemples plus complets.
+Le projet **swift-dbus** vise à offrir une couverture complète et moderne de l’API **D-Bus** en Swift (6.2+), pour Linux.
+
+La feuille de route détaillant les différentes étapes (wrappers bas niveau, API Swift, proxies, export d’objets, génération de code, etc.) est disponible ici :
+
+👉 [Consulter la ROADMAP →](./ROADMAP.md)
+
+Tu y trouveras la progression prévue, les milestones et les futurs objectifs de compatibilité et d’outillage.
+

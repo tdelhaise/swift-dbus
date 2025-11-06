@@ -1,0 +1,63 @@
+# -----------------------------
+# SwiftPM / Build Artifacts
+# -----------------------------
+.build/
+.swiftpm/
+.swiftpm/xcode/
+Packages/           # legacy
+Package.pins        # legacy
+
+# Si vous générez un projet Xcode (macOS)
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+
+# -----------------------------
+# Docs / DocC
+# -----------------------------
+.docc-build/
+Documentation.docc/.cache/
+docs/.build/
+
+# -----------------------------
+# Tests / Coverage / Profiling
+# -----------------------------
+*.profdata
+*.gcda
+*.gcno
+coverage/
+.swift-test-*
+
+# -----------------------------
+# Editors / OS junk
+# -----------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# -----------------------------
+# Tooling / Linters / Clang
+# -----------------------------
+.clangd/
+.clang-tidy
+compile_commands.json
+.cache/
+
+# -----------------------------
+# Logs & env
+# -----------------------------
+*.log
+.env
+.env.*
+
+# -----------------------------
+# Keep CI & configs tracked
+# -----------------------------
+!.github/
+

@@ -1,0 +1,5 @@
+module CDbus [system] {
+  header "include/shim.h"
+  link "dbus-1"
+  export *
+}

@@ -1,4 +1,4 @@
-name: CI (Linux)
+name: CI (Linux, container)
 
 on:
   push:
@@ -8,23 +8,20 @@ on:
 
 jobs:
   build-and-test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, ubuntu-24.04]
-        swift: ["6.2"]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04          # le runner host importe peu ici
+    container:
+      image: swift:6.2-noble       # outilchain Swift 6.2 sur Ubuntu 24.04 (noble)
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install D-Bus headers
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
+        run: apt-get update && apt-get install -y libdbus-1-dev pkg-config
 
-      - name: Setup Swift ${{ matrix.swift }}
-        uses: swift-actions/setup-swift@v1
-        with:
-          swift-version: ${{ matrix.swift }}
+      - name: Debug toolchain & dbus
+        run: |
+          swift --version
+          pkg-config --modversion dbus-1
 
       - name: Build
         run: swift build -v

@@ -25,4 +25,11 @@ public enum DBus {
         let (ma, mi, mc) = version()
         return (ma >= 1) && (mi >= 0) && (mc >= 0)
     }
+
+    /// Renvoie un identifiant machine si possible (APIs Peer/Bus) — placeholder M0.
+    public static func machineIdIfAvailable() -> String? {
+        // M0: on évite d'ouvrir une vraie connexion ici.
+        // On garde ça pour M1. Cette méthode restera un placeholder.
+        return nil
+    }
 }

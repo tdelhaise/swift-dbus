@@ -7,14 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `DBusProxy` helpers: `call(arguments:)`, `callExpectingBasics`, property helpers (`getProperty`, `setProperty`, `getAllProperties`) and `proxy.signals(member:)`.
-- `DBusMarshal` utilities to encoder/décoder `DBusBasicValue`, variants et dictionnaires `{sv}` (support de `stringArray`).
-- README section « Proxy haut niveau » + exemples propriétés.
+- `DBusBasicValue`/`DBusDecoder`: encode/décode des bases étendus (`uint32`, struct, arrays), génération de signatures, variants `{sv}`.
+- `DBusProxy` typed APIs: `callExpectingSingle`, `callExpecting(decode:)`, `signals(member:as:)`, propriétés typées (`getProperty<T>`, `setProperty<T>`).
+- README exemples : appels multi-arguments, propriétés typées, signaux typés.
 - (prévu) Export d’objets Swift (serveur).
 - (prévu M6) Générateur de code à partir d’introspection XML.
 
 ### Tests
-- `ProxyTests`: call avec arguments, écoute de signaux, lecture des propriétés `Features`, `GetAll`.
+- `ProxyTests`: appels RequestName/ReleaseName, décodage signal typé, propriétés typées, `GetAll`.
 
 ---
 

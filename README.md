@@ -63,6 +63,26 @@ let owner = try connection.getNameOwner("org.freedesktop.DBus")
 try connection.pingPeer()
 ```
 
+### Appels multi-arguments & retour typé
+
+```swift
+let proxy = DBusProxy(
+    connection: connection,
+    destination: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    interface: "org.freedesktop.DBus"
+)
+
+let status: UInt32 = try proxy.callExpectingSingle(
+    "RequestName",
+    arguments: [.string("org.example.App"), .uint32(0)]
+)
+
+let names: [String] = try proxy.callExpecting("ListNames") { decoder in
+    try decoder.next([String].self)
+}
+```
+
 ### Écouter un signal typé
 
 ```swift
@@ -99,12 +119,25 @@ for await change in try proxy.signals(member: "NameOwnerChanged", arg0: "org.exa
 ### Propriétés via `org.freedesktop.DBus.Properties`
 
 ```swift
-if case .stringArray(let features) = try proxy.getProperty("Features") {
-    print("Bus features: \(features)")
+let features: [String] = try proxy.getProperty("Features")
+let all = try proxy.getAllProperties()
+print(all["Features"] ?? .unsupported(0))
+```
+
+### Signaux typés via proxy
+
+```swift
+let typedStream = try proxy.signals(member: "NameOwnerChanged", arg0: "org.example.App") { decoder in
+    (
+        try decoder.next(String.self),
+        try decoder.next(String.self),
+        try decoder.next(String.self)
+    )
 }
 
-let all = try proxy.getAllProperties()
-print(all.keys)
+for await (name, oldOwner, newOwner) in typedStream {
+    print("\(name) moved from \(oldOwner) -> \(newOwner)")
+}
 ```
 
 ## CI (Ubuntu)

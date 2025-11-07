@@ -37,7 +37,7 @@ public struct DBusProxy: Sendable {
         )
     }
 
-    /// Appel avec arguments basiques (`s`, `i`, `b`, `d`).
+    /// Appel avec arguments basiques/génériques (`DBusBasicValue`).
     @discardableResult
     public func call(
         _ method: String,
@@ -46,7 +46,7 @@ public struct DBusProxy: Sendable {
     ) throws -> DBusMessageRef {
         try call(method, timeoutMS: timeoutMS) { iterator in
             for argument in arguments {
-                try DBusMarshal.appendBasic(argument, into: &iterator)
+                try DBusMarshal.appendValue(argument, into: &iterator)
             }
         }
     }
@@ -71,6 +71,33 @@ public struct DBusProxy: Sendable {
         return DBusMarshal.decodeAllBasicArgs(reply)
     }
 
+    /// Appel avec décodage personnalisé via un `DBusDecoder`.
+    public func callExpecting<T>(
+        _ method: String,
+        arguments: [DBusBasicValue] = [],
+        timeoutMS: Int32 = 2000,
+        decode: (inout DBusDecoder) throws -> T
+    ) throws -> T {
+        let basics = try callExpectingBasics(method, arguments: arguments, timeoutMS: timeoutMS)
+        var decoder = DBusDecoder(values: basics)
+        return try decode(&decoder)
+    }
+
+    /// Appel attend un unique élément décodable.
+    public func callExpectingSingle<T: DBusBasicDecodable>(
+        _ method: String,
+        arguments: [DBusBasicValue] = [],
+        timeoutMS: Int32 = 2000
+    ) throws -> T {
+        let basics = try callExpectingBasics(method, arguments: arguments, timeoutMS: timeoutMS)
+        var decoder = DBusDecoder(values: basics)
+        let value: T = try decoder.next()
+        if !decoder.isAtEnd {
+            throw DBusDecodeError.missingValue(expected: "end of values")
+        }
+        return value
+    }
+
     /// Stream de signaux limité à cette interface & member (optionnel arg0).
     public func signals(
         member: String,
@@ -83,6 +110,30 @@ public struct DBusProxy: Sendable {
             arg0: arg0
         )
         return try connection.signals(matching: rule)
+    }
+
+    /// Variante typée de `signals` : décode chaque signal via closure.
+    public func signals<T>(
+        member: String,
+        arg0: String? = nil,
+        as decode: @escaping @Sendable (inout DBusDecoder) throws -> T
+    ) throws -> AsyncStream<T> {
+        let raw = try signals(member: member, arg0: arg0)
+        return AsyncStream<T> { continuation in
+            let task = Task {
+                for await signal in raw {
+                    var decoder = DBusDecoder(values: signal.args)
+                    do {
+                        let decoded = try decode(&decoder)
+                        continuation.yield(decoded)
+                    } catch {
+                        continue
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 
     // MARK: - Properties helpers (org.freedesktop.DBus.Properties)
@@ -102,16 +153,33 @@ public struct DBusProxy: Sendable {
         return try DBusMarshal.firstVariantBasic(reply)
     }
 
+    public func getProperty<T: DBusBasicDecodable>(
+        _ property: String,
+        as type: T.Type = T.self,
+        timeoutMS: Int32 = 2000
+    ) throws -> T {
+        let value = try getProperty(property, timeoutMS: timeoutMS)
+        return try type.decode(from: value)
+    }
+
     public func setProperty(
         _ property: String,
         value: DBusBasicValue,
         timeoutMS: Int32 = 2000
     ) throws {
         _ = try propertiesProxy().call("Set", timeoutMS: timeoutMS) { iterator in
-            try DBusMarshal.appendBasic(.string(interface), into: &iterator)
-            try DBusMarshal.appendBasic(.string(property), into: &iterator)
+            try DBusMarshal.appendValue(.string(interface), into: &iterator)
+            try DBusMarshal.appendValue(.string(property), into: &iterator)
             try DBusMarshal.appendVariant(of: value, into: &iterator)
         }
+    }
+
+    public func setProperty<T: DBusBasicEncodable>(
+        _ property: String,
+        value: T,
+        timeoutMS: Int32 = 2000
+    ) throws {
+        try setProperty(property, value: value.dbusValue, timeoutMS: timeoutMS)
     }
 
     public func getAllProperties(timeoutMS: Int32 = 2000) throws -> [String: DBusBasicValue] {

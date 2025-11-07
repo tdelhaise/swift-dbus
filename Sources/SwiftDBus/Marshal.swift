@@ -1,3 +1,4 @@
+// swiftlint:disable file_length
 import CDbus
 
 public enum DBusMarshalError: Swift.Error, CustomStringConvertible {
@@ -272,6 +273,60 @@ public enum DBusMarshal {
         return results
     }
 
+    public static func signature(of values: [DBusBasicValue]) -> String {
+        values.map { $0.typeSignatureFragment }.joined()
+    }
+
+    public static func appendValue(
+        _ value: DBusBasicValue,
+        into iterator: inout DBusMessageIter
+    ) throws {
+        switch value {
+        case .structure(let fields):
+            var structIterator = DBusMessageIter()
+            let opened = dbus_message_iter_open_container(
+                &iterator,
+                DBusTypeCode.STRUCT,
+                nil,
+                &structIterator
+            )
+            if opened == 0 {
+                throw DBusMarshalError.openContainerFailed("struct")
+            }
+            for field in fields {
+                try appendValue(field, into: &structIterator)
+            }
+            let closed = dbus_message_iter_close_container(&iterator, &structIterator)
+            if closed == 0 {
+                throw DBusMarshalError.closeContainerFailed("struct")
+            }
+        case .stringArray(let strings):
+            var arrayIterator = DBusMessageIter()
+            let opened = "s".withCString { elementSig in
+                dbus_message_iter_open_container(
+                    &iterator,
+                    DBusTypeCode.ARRAY,
+                    elementSig,
+                    &arrayIterator
+                )
+            }
+            if opened == 0 {
+                throw DBusMarshalError.openContainerFailed("array<string>")
+            }
+            for string in strings {
+                try appendBasic(.string(string), into: &arrayIterator)
+            }
+            let closed = dbus_message_iter_close_container(&iterator, &arrayIterator)
+            if closed == 0 {
+                throw DBusMarshalError.closeContainerFailed("array<string>")
+            }
+        case .unsupported(let type):
+            throw DBusMarshalError.appendFailed("unsupported value type \(type)")
+        default:
+            try appendBasic(value, into: &iterator)
+        }
+    }
+
     public static func appendBasic(
         _ value: DBusBasicValue,
         into iterator: inout DBusMessageIter
@@ -290,6 +345,9 @@ public enum DBusMarshal {
         case .int32(var intValue):
             let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.INT32, &intValue)
             if ok == 0 { throw DBusMarshalError.appendFailed("int32") }
+        case .uint32(var uintValue):
+            let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.UINT32, &uintValue)
+            if ok == 0 { throw DBusMarshalError.appendFailed("uint32") }
         case .bool(let boolValue):
             var dbusBool: dbus_bool_t = boolValue ? 1 : 0
             let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.BOOLEAN, &dbusBool)
@@ -297,7 +355,7 @@ public enum DBusMarshal {
         case .double(var doubleValue):
             let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.DOUBLE, &doubleValue)
             if ok == 0 { throw DBusMarshalError.appendFailed("double") }
-        case .stringArray, .unsupported:
+        case .stringArray, .structure, .unsupported:
             throw DBusMarshalError.appendFailed("unsupported basic value")
         }
     }
@@ -323,7 +381,7 @@ public enum DBusMarshal {
             throw DBusMarshalError.openContainerFailed("variant")
         }
 
-        try appendBasic(value, into: &variantIter)
+        try appendValue(value, into: &variantIter)
 
         let closed = dbus_message_iter_close_container(&iterator, &variantIter)
         if closed == 0 {
@@ -409,6 +467,10 @@ public enum DBusMarshal {
             var intValue: Int32 = 0
             dbus_message_iter_get_basic(&iterator, &intValue)
             return .int32(intValue)
+        case DBusTypeCode.UINT32:
+            var uintValue: UInt32 = 0
+            dbus_message_iter_get_basic(&iterator, &uintValue)
+            return .uint32(uintValue)
         case DBusTypeCode.BOOLEAN:
             var boolRaw: dbus_bool_t = 0
             dbus_message_iter_get_basic(&iterator, &boolRaw)

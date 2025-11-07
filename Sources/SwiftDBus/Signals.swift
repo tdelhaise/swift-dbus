@@ -72,67 +72,6 @@ public struct DBusMatchRule: Equatable, CustomStringConvertible, Sendable {
     public var description: String { text }
 }
 
-// MARK: - Valeurs décodées
-
-public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
-    case string(String)
-    case int32(Int32)
-    case bool(Bool)
-    case double(Double)
-    case stringArray([String])
-    /// Rencontré mais non géré (struct/array/variant/other types)
-    case unsupported(Int32)
-
-    public var description: String {
-        switch self {
-        case .string(let value):
-            return "string(\(value))"
-        case .int32(let value):
-            return "int32(\(value))"
-        case .bool(let value):
-            return "bool(\(value))"
-        case .double(let value):
-            return "double(\(value))"
-        case .stringArray(let values):
-            return "stringArray(\(values))"
-        case .unsupported(let type):
-            return "unsupported(type:\(type))"
-        }
-    }
-}
-
-extension DBusBasicValue {
-    var dbusTypeCode: Int32? {
-        switch self {
-        case .string:
-            return DBusTypeCode.STRING
-        case .int32:
-            return DBusTypeCode.INT32
-        case .bool:
-            return DBusTypeCode.BOOLEAN
-        case .double:
-            return DBusTypeCode.DOUBLE
-        case .stringArray, .unsupported:
-            return nil
-        }
-    }
-
-    var typeSignature: String? {
-        switch self {
-        case .string:
-            return "s"
-        case .int32:
-            return "i"
-        case .bool:
-            return "b"
-        case .double:
-            return "d"
-        case .stringArray, .unsupported:
-            return nil
-        }
-    }
-}
-
 // MARK: - Représentation d’un signal
 
 public struct DBusSignal: CustomStringConvertible, Sendable {

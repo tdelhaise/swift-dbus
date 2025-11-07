@@ -1,0 +1,196 @@
+import Foundation
+
+public enum DBusDecodeError: Error, CustomStringConvertible {
+    case missingValue(expected: String)
+    case typeMismatch(expected: String, value: DBusBasicValue)
+
+    public var description: String {
+        switch self {
+        case .missingValue(let expected):
+            return "Missing value expected: \(expected)"
+        case .typeMismatch(let expected, let value):
+            return "Type mismatch: expected \(expected), got \(value)"
+        }
+    }
+}
+
+public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
+    case string(String)
+    case int32(Int32)
+    case uint32(UInt32)
+    case bool(Bool)
+    case double(Double)
+    case stringArray([String])
+    case structure([DBusBasicValue])
+    /// Rencontré mais non géré (struct/array/variant/other types)
+    case unsupported(Int32)
+
+    public var description: String {
+        switch self {
+        case .string(let value):
+            return "string(\(value))"
+        case .int32(let value):
+            return "int32(\(value))"
+        case .uint32(let value):
+            return "uint32(\(value))"
+        case .bool(let value):
+            return "bool(\(value))"
+        case .double(let value):
+            return "double(\(value))"
+        case .stringArray(let values):
+            return "stringArray(\(values))"
+        case .structure(let values):
+            return "structure(\(values))"
+        case .unsupported(let typeCode):
+            return "unsupported(type:\(typeCode))"
+        }
+    }
+
+    var dbusTypeCode: Int32? {
+        switch self {
+        case .string:
+            return DBusTypeCode.STRING
+        case .int32:
+            return DBusTypeCode.INT32
+        case .uint32:
+            return DBusTypeCode.UINT32
+        case .bool:
+            return DBusTypeCode.BOOLEAN
+        case .double:
+            return DBusTypeCode.DOUBLE
+        case .stringArray, .structure, .unsupported:
+            return nil
+        }
+    }
+
+    var typeSignatureFragment: String {
+        switch self {
+        case .string:
+            return "s"
+        case .int32:
+            return "i"
+        case .uint32:
+            return "u"
+        case .bool:
+            return "b"
+        case .double:
+            return "d"
+        case .stringArray:
+            return "as"
+        case .structure(let values):
+            let inner = values.map { $0.typeSignatureFragment }.joined()
+            return "(\(inner))"
+        case .unsupported:
+            return ""
+        }
+    }
+
+    var typeSignature: String? {
+        let fragment = typeSignatureFragment
+        return fragment.isEmpty ? nil : fragment
+    }
+}
+
+public protocol DBusBasicEncodable {
+    var dbusValue: DBusBasicValue { get }
+}
+
+public protocol DBusBasicDecodable {
+    static func decode(from value: DBusBasicValue) throws -> Self
+}
+
+extension String: DBusBasicEncodable, DBusBasicDecodable {
+    public var dbusValue: DBusBasicValue { .string(self) }
+    public static func decode(from value: DBusBasicValue) throws -> String {
+        guard case .string(let string) = value else {
+            throw DBusDecodeError.typeMismatch(expected: "string", value: value)
+        }
+        return string
+    }
+}
+
+extension Int32: DBusBasicEncodable, DBusBasicDecodable {
+    public var dbusValue: DBusBasicValue { .int32(self) }
+    public static func decode(from value: DBusBasicValue) throws -> Int32 {
+        guard case .int32(let intValue) = value else {
+            throw DBusDecodeError.typeMismatch(expected: "int32", value: value)
+        }
+        return intValue
+    }
+}
+
+extension UInt32: DBusBasicEncodable, DBusBasicDecodable {
+    public var dbusValue: DBusBasicValue { .uint32(self) }
+    public static func decode(from value: DBusBasicValue) throws -> UInt32 {
+        switch value {
+        case .uint32(let value):
+            return value
+        case .int32(let value) where value >= 0:
+            return UInt32(value)
+        default:
+            throw DBusDecodeError.typeMismatch(expected: "uint32", value: value)
+        }
+    }
+}
+
+extension Bool: DBusBasicEncodable, DBusBasicDecodable {
+    public var dbusValue: DBusBasicValue { .bool(self) }
+    public static func decode(from value: DBusBasicValue) throws -> Bool {
+        guard case .bool(let boolValue) = value else {
+            throw DBusDecodeError.typeMismatch(expected: "bool", value: value)
+        }
+        return boolValue
+    }
+}
+
+extension Double: DBusBasicEncodable, DBusBasicDecodable {
+    public var dbusValue: DBusBasicValue { .double(self) }
+    public static func decode(from value: DBusBasicValue) throws -> Double {
+        guard case .double(let doubleValue) = value else {
+            throw DBusDecodeError.typeMismatch(expected: "double", value: value)
+        }
+        return doubleValue
+    }
+}
+
+extension Array: DBusBasicEncodable, DBusBasicDecodable where Element == String {
+    public var dbusValue: DBusBasicValue { .stringArray(self) }
+    public static func decode(from value: DBusBasicValue) throws -> [String] {
+        guard case .stringArray(let strings) = value else {
+            throw DBusDecodeError.typeMismatch(expected: "string array", value: value)
+        }
+        return strings
+    }
+}
+
+extension DBusBasicValue: DBusBasicEncodable {
+    public var dbusValue: DBusBasicValue { self }
+}
+
+extension DBusBasicValue: DBusBasicDecodable {
+    public static func decode(from value: DBusBasicValue) throws -> DBusBasicValue {
+        value
+    }
+}
+
+public struct DBusDecoder {
+    private var values: ArraySlice<DBusBasicValue>
+
+    public init(values: [DBusBasicValue]) {
+        self.values = ArraySlice(values)
+    }
+
+    public var isAtEnd: Bool { values.isEmpty }
+
+    public mutating func nextValue() throws -> DBusBasicValue {
+        guard let value = values.popFirst() else {
+            throw DBusDecodeError.missingValue(expected: "next value")
+        }
+        return value
+    }
+
+    public mutating func next<T: DBusBasicDecodable>(_ type: T.Type = T.self) throws -> T {
+        let value = try nextValue()
+        return try type.decode(from: value)
+    }
+}

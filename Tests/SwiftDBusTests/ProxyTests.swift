@@ -6,93 +6,95 @@ final class ProxyTests: XCTestCase {
 
     func testProxyCallReturnsBusId() throws {
         let connection = try DBusConnection(bus: .session)
-        let proxy = DBusProxy(
-            connection: connection,
-            destination: "org.freedesktop.DBus",
-            path: "/org/freedesktop/DBus",
-            interface: "org.freedesktop.DBus"
-        )
+        let proxy = makeBusProxy(connection)
 
-        let busId = try proxy.callExpectingFirstString("GetId")
+        let busId: String = try proxy.callExpectingSingle("GetId")
         XCTAssertFalse(busId.isEmpty)
     }
 
     func testProxyGetNameOwnerWithArguments() throws {
         let connection = try DBusConnection(bus: .session)
-        let proxy = DBusProxy(
-            connection: connection,
-            destination: "org.freedesktop.DBus",
-            path: "/org/freedesktop/DBus",
-            interface: "org.freedesktop.DBus"
-        )
+        let proxy = makeBusProxy(connection)
 
-        let owner = try proxy.callExpectingFirstString(
+        let owner: String = try proxy.callExpectingSingle(
             "GetNameOwner",
             arguments: [.string("org.freedesktop.DBus")]
         )
-        XCTAssertTrue(owner.hasPrefix("org.freedesktop.DBus") || owner.hasPrefix(":"))
+        XCTAssertTrue(owner.hasPrefix(":") || owner == "org.freedesktop.DBus")
     }
 
-    func testProxySignalsForwarded() async throws {
+    func testProxyRequestNameAndReleaseWithTypedArguments() throws {
         let connection = try DBusConnection(bus: .session)
-        let proxy = DBusProxy(
-            connection: connection,
-            destination: "org.freedesktop.DBus",
-            path: "/org/freedesktop/DBus",
-            interface: "org.freedesktop.DBus"
+        let proxy = makeBusProxy(connection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.proxy.req")
+
+        let requestStatus: UInt32 = try proxy.callExpectingSingle(
+            "RequestName",
+            arguments: [
+                .string(tempName),
+                .uint32(0)
+            ]
         )
+        XCTAssertNotEqual(requestStatus, 0, "request name should succeed")
 
-        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.proxytest")
-        let stream = try proxy.signals(member: "NameOwnerChanged", arg0: tempName)
+        let releaseStatus: UInt32 = try proxy.callExpectingSingle(
+            "ReleaseName",
+            arguments: [.string(tempName)]
+        )
+        XCTAssertNotEqual(releaseStatus, 0, "release name should succeed")
+    }
 
-        let expectation = XCTestExpectation(description: "proxy signal delivered")
+    func testProxySignalsTypedDecoding() async throws {
+        let connection = try DBusConnection(bus: .session)
+        let proxy = makeBusProxy(connection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.proxy.signal")
+
+        let stream = try proxy.signals(member: "NameOwnerChanged", arg0: tempName) { decoder in
+            let name: String = try decoder.next()
+            let oldOwner: String = try decoder.next()
+            let newOwner: String = try decoder.next()
+            return (name, oldOwner, newOwner)
+        }
+
+        let expectation = XCTestExpectation(description: "typed signal received")
+
         let consumer = Task {
-            for await signal in stream {
-                guard signal.member == "NameOwnerChanged" else { continue }
-                if case .string(let name)? = signal.args.first, name == tempName {
-                    expectation.fulfill()
-                    break
-                }
+            for await (name, _, newOwner) in stream where name == tempName {
+                XCTAssertTrue(newOwner.hasPrefix(":"), "new owner should be unique name")
+                expectation.fulfill()
+                break
             }
         }
 
-        _ = try connection.requestName(tempName)
+        let _: UInt32 = try proxy.callExpectingSingle(
+            "RequestName",
+            arguments: [.string(tempName), .uint32(0)]
+        )
         await fulfillment(of: [expectation], timeout: 3.0)
-        _ = try connection.releaseName(tempName)
+        let _: UInt32 = try proxy.callExpectingSingle(
+            "ReleaseName",
+            arguments: [.string(tempName)]
+        )
 
         consumer.cancel()
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
 
-    func testProxyGetPropertyFeatures() throws {
+    func testProxyTypedPropertyAccess() throws {
         let connection = try DBusConnection(bus: .session)
-        let proxy = DBusProxy(
-            connection: connection,
-            destination: "org.freedesktop.DBus",
-            path: "/org/freedesktop/DBus",
-            interface: "org.freedesktop.DBus"
-        )
+        let proxy = makeBusProxy(connection)
 
-        let value = try proxy.getProperty("Features")
-        guard case .stringArray(let features) = value else {
-            XCTFail("Expected string array for Features property")
-            return
-        }
+        let features: [String] = try proxy.getProperty("Features")
         XCTAssertFalse(features.isEmpty)
     }
 
     func testProxyGetAllPropertiesContainsFeatures() throws {
         let connection = try DBusConnection(bus: .session)
-        let proxy = DBusProxy(
-            connection: connection,
-            destination: "org.freedesktop.DBus",
-            path: "/org/freedesktop/DBus",
-            interface: "org.freedesktop.DBus"
-        )
+        let proxy = makeBusProxy(connection)
 
         let properties = try proxy.getAllProperties()
         guard case .stringArray(let features)? = properties["Features"] else {
-            XCTFail("Expected Features property in GetAll")
+            XCTFail("Expected Features entry in GetAll result")
             return
         }
         XCTAssertFalse(features.isEmpty)

@@ -1,28 +1,27 @@
-// Sources/swift-dbus-examples/main.swift
 import Foundation
 import SwiftDBus
 
-let (major, minor, micro) = DBus.version()
-print("libdbus version: \(major).\(minor).\(micro)")
+// L’exécutable est construit avec un entry-point custom (voir flags SPM).
+struct ExampleApp {
+    static func main() {
+        do {
+            let connection = try DBusConnection(bus: .session)
 
-do {
-    let conn = try DBusConnection(bus: .session)
-    print("Unique name: \(try conn.uniqueName())")
+            let unique = try connection.uniqueName()
+            print("Unique name: \(unique)")
 
-    let busId = try conn.getBusId()
-    print("Bus ID: \(busId)")
+            let busId = try connection.getBusId()
+            print("Bus ID: \(busId)")
 
-    let stream = try conn.messages()
-    Task.detached {
-        for await msg in stream {
-            // Placeholder: on imprimera le type/headers à M2
-            print("Received message ptr: \(msg.raw)")
+            let names = try connection.listNames()
+            let firstFive = names.prefix(5).joined(separator: ", ")
+            print("Names on the bus (first 5): \(firstFive)")
+
+            try connection.pingPeer()
+            print("Peer Ping OK")
+
+        } catch {
+            print("Example failed: \(error)")
         }
     }
-
-    // Laisser tourner un court instant pour voir des events (si signal DBus arrive)
-    Thread.sleep(forTimeInterval: 1)
-    conn.stopPump()
-} catch {
-    print("DBus error: \(error)")
 }

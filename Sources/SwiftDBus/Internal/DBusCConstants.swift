@@ -31,6 +31,8 @@ public enum DBusTypeCode {
     public static let VARIANT: Int32 = ascii("v")
     public static let ARRAY: Int32 = ascii("a")
     public static let UNIX_FD: Int32 = ascii("h")
+    public static let DICT_ENTRY: Int32 = ascii("e")
+    public static let STRUCT: Int32 = ascii("r")
 
     // Container delimiters (used by the low-level iter API)
     public static let STRUCT_BEGIN: Int32 = ascii("(")

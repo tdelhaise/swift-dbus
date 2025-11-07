@@ -120,7 +120,7 @@ public final class DBusConnection: @unchecked Sendable {
     }
 }
 
-// MARK: - Calls (M2 minimal + M2.1)
+// MARK: - Appels (M2 / M2.1 / M2.2)
 
 extension DBusConnection {
     /// Envoie un appel DBus et renvoie la réponse brute (ou jette sur erreur DBus).
@@ -199,7 +199,6 @@ extension DBusConnection {
             throw Error.failed("connection is nil")
         }
 
-        // Construire le message avec un argument `string`
         let requestMessage = try DBusMessageBuilder.methodCall1StringArg(
             destination: "org.freedesktop.DBus",
             path: "/org/freedesktop/DBus",
@@ -208,7 +207,6 @@ extension DBusConnection {
             arg: wellKnownName
         )
 
-        // Envoyer et attendre la réponse
         let replyPointer: OpaquePointer? = try withDBusError { errorPointer in
             dbus_connection_send_with_reply_and_block(
                 connectionPointer,
@@ -230,6 +228,18 @@ extension DBusConnection {
         }
 
         let replyMessage = DBusMessageRef(taking: nonNullReplyPointer)
-        return try DBusMarshal.firstString(replyMessage)
+        return try DBusMessageDecode.firstString(replyMessage)
+    }
+
+    /// org.freedesktop.DBus.ListNames() -> as
+    public func listNames(timeoutMS: Int32 = 2000) throws -> [String] {
+        let replyMessage = try callRaw(
+            destination: "org.freedesktop.DBus",
+            path: "/org/freedesktop/DBus",
+            interface: "org.freedesktop.DBus",
+            method: "ListNames",
+            timeoutMS: timeoutMS
+        )
+        return try DBusMessageDecode.firstArrayOfStrings(replyMessage)
     }
 }

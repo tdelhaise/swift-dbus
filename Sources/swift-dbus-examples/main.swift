@@ -9,6 +9,9 @@ do {
     let conn = try DBusConnection(bus: .session)
     print("Unique name: \(try conn.uniqueName())")
 
+    let busId = try conn.getBusId()
+    print("Bus ID: \(busId)")
+
     let stream = try conn.messages()
     Task.detached {
         for await msg in stream {

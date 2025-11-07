@@ -21,31 +21,49 @@ public enum DBusMessageError: Swift.Error, CustomStringConvertible {
 }
 
 public enum DBusMessageBuilder {
+    /// Construit un `METHOD_CALL` sans arguments.
     public static func methodCall(
         destination: String,
         path: String,
         interface: String,
         method: String
     ) throws -> DBusMessageRef {
-        let msg = try DBusMessageRef.wrapOrThrow(
-            dbus_message_new_method_call(
-                destination, path, interface, method
-            ),
+        let message = try DBusMessageRef.wrapOrThrow(
+            dbus_message_new_method_call(destination, path, interface, method),
             "dbus_message_new_method_call failed"
         )
-        return msg
+        return message
+    }
+
+    /// Variante avec un seul argument `String`.
+    public static func methodCall1StringArg(
+        destination: String,
+        path: String,
+        interface: String,
+        method: String,
+        arg: String
+    ) throws -> DBusMessageRef {
+        let message = try methodCall(
+            destination: destination,
+            path: path,
+            interface: interface,
+            method: method
+        )
+        try DBusMarshal.appendString(message, arg)
+        return message
     }
 }
 
 public enum DBusMessageDecode {
-    public static func firstString(_ msg: DBusMessageRef) throws -> String {
-        let typeCode = dbus_message_get_type(msg.raw)
+    /// Récupère le **premier argument String** d’un `METHOD_RETURN`.
+    public static func firstString(_ message: DBusMessageRef) throws -> String {
+        let typeCode = dbus_message_get_type(message.raw)
 
         if typeCode == DBusMsgType.ERROR {
-            let name =
-                dbus_message_get_error_name(msg.raw).map { String(cString: $0) }
+            let errorName =
+                dbus_message_get_error_name(message.raw).map { String(cString: $0) }
                 ?? "org.freedesktop.DBus.Error.Failed"
-            throw DBusMessageError.dbusError(name: name, message: "DBus returned error")
+            throw DBusMessageError.dbusError(name: errorName, message: "DBus returned error")
         }
 
         guard typeCode == DBusMsgType.METHOD_RETURN else {
@@ -55,17 +73,21 @@ public enum DBusMessageDecode {
             )
         }
 
-        var iter = DBusMessageIter()
-        if dbus_message_iter_init(msg.raw, &iter) == 0 {
+        var readIterator = DBusMessageIter()
+        guard dbus_message_iter_init(message.raw, &readIterator) != 0 else {
             throw DBusMessageError.decodeFailed("no return arguments")
         }
-        let argType = dbus_message_iter_get_arg_type(&iter)
-        guard argType == DBusTypeCode.STRING else {
-            throw DBusMessageError.decodeFailed("first arg is not string (got \(dbusTypeDebugString(argType)))")
+
+        let argTypeCode = dbus_message_iter_get_arg_type(&readIterator)
+        guard argTypeCode == DBusTypeCode.STRING else {
+            throw DBusMessageError.decodeFailed(
+                "first arg is not string (got \(dbusTypeDebugString(argTypeCode)))"
+            )
         }
-        var cString: UnsafePointer<CChar>?
-        dbus_message_iter_get_basic(&iter, &cString)
-        guard let nonNullCString = cString else {
+
+        var cStringPointer: UnsafePointer<CChar>?
+        dbus_message_iter_get_basic(&readIterator, &cStringPointer)
+        guard let nonNullCString = cStringPointer else {
             throw DBusMessageError.decodeFailed("null string")
         }
         return String(cString: nonNullCString)

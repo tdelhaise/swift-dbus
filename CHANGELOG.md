@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.4.0] - 2025-11-07
+### Added
+- `DBusMarshal`: append {String, Bool, Int32, Double} et decode {firstString, firstBool, firstInt32, firstDouble}.
+- `DBusMessageBuilder.methodCall1StringArg(...)` pour construire un appel avec 1 argument `String`.
+- `DBusConnection.getNameOwner(_:) -> String`.
+
+### Tests
+- `MarshalAndCallWithArgsTests`: appel réel `GetNameOwner("org.freedesktop.DBus")` (tolère unique name `:...` ou echo du well-known selon l’environnement).
+
+### CI
+- Les tests continuent d’être exécutés sous `dbus-run-session`.
+
+---
+
 ## [v0.3.1] - 2025-11-07
 ### Fixed
 - CI: exécute les tests sous `dbus-run-session` et installe `dbus` pour fournir un session bus en environnement conteneurisé (jammy/noble).

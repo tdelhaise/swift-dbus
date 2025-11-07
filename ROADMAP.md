@@ -44,10 +44,10 @@
 - [ ] **Monitoring** (optionnel, behind a flag).
 
 ### M4 — Proxies Client
-- [ ] `DBusProxy` générique : cible = (busName, objectPath, interface).
-- [ ] `call(method:args:signature:) async throws -> Return` (avec surcharge typée).
-- [ ] **Signaux** : `proxy.signals("Interface", "Signal") -> AsyncStream<T>` (avec decode).
-- [ ] **Propriétés** (org.freedesktop.DBus.Properties) : `Get`, `Set`, `GetAll` typés.
+- [x] `DBusProxy` générique : cible = (busName, objectPath, interface) + écoute de signaux.
+- [x] `call(method:args:signature:) async throws -> Return` (helpers `call(arguments:)`, `callExpectingBasics)`).
+- [x] **Signaux** : `proxy.signals("Interface", "Signal") -> AsyncStream<T>` (avec decode).
+- [x] **Propriétés** (org.freedesktop.DBus.Properties) : `Get`, `Set`, `GetAll` typés (variants basiques).
 
 ### M5 — Serveur / Export d’objets
 - [ ] `DBusObject` protocole Swift (méthodes, signaux, propriétés).

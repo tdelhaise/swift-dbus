@@ -7,9 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- (prévu M3) Encodeur/décodeur de types de base (bool, int32, double, string, object path, signature) et appels avec arguments.
-- (prévu) Proxies haut niveau et export d’objets.
-- (prévu) Générateur de code à partir d’introspection XML.
+- `DBusProxy` helpers: `call(arguments:)`, `callExpectingBasics`, property helpers (`getProperty`, `setProperty`, `getAllProperties`) and `proxy.signals(member:)`.
+- `DBusMarshal` utilities to encoder/décoder `DBusBasicValue`, variants et dictionnaires `{sv}` (support de `stringArray`).
+- README section « Proxy haut niveau » + exemples propriétés.
+- (prévu) Export d’objets Swift (serveur).
+- (prévu M6) Générateur de code à partir d’introspection XML.
+
+### Tests
+- `ProxyTests`: call avec arguments, écoute de signaux, lecture des propriétés `Features`, `GetAll`.
+
+---
+
+## [v0.6.0] - 2025-11-07 — **Signals & Bus Helpers (M3 completion)**
+### Added
+- `DBusMatchRule`, `DBusSignal` et `DBusConnection.signals(matching:)` pour s’abonner aux signaux DBus (tests `SignalsTests` NameOwnerChanged + filtre `arg0`).
+- `DBusConnection` : helpers `requestName`, `releaseName`, `listNames`, `getNameOwner`, `getBusId`, `pingPeer`, `getMachineId`.
+- Readme : section API (exemples de connexion, signaux) + section “Tests & Qualité”.
+- `scripts/test.sh` encapsule `dbus-run-session -- swift test` (utilisé localement et en CI).
+- `AGENTS.md` : guide contributeur (structure, conventions, commandes).
+- Début de M4 : `DBusProxy` (appels bruts, helper `callExpectingFirstString`, `signals(member:)`).
+
+### Changed
+- `ROADMAP.md` : jalons M0-M3 cochés, M3 ➜ done, focus sur M4+.
+- `.github/workflows/ci.yml` : les jobs Jammy/Noble utilisent `bash scripts/test.sh -v` pour les tests.
+- README/ROADMAP synchronisés avec les nouvelles APIs et scripts.
+
+### Tests
+- `scripts/test.sh` (dbus-run-session) devient la commande canonique pour `swift test`.
 
 ---
 
@@ -81,8 +105,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Links
 
-- [Unreleased]: https://github.com/tdelhaise/swift-dbus/compare/v0.3.0...HEAD
+- [Unreleased]: https://github.com/tdelhaise/swift-dbus/compare/v0.6.0...HEAD
+- [v0.6.0]: https://github.com/tdelhaise/swift-dbus/compare/v0.4.0...v0.6.0
 - [v0.3.0]: https://github.com/tdelhaise/swift-dbus/compare/v0.2.0...v0.3.0
 - [v0.2.0]: https://github.com/tdelhaise/swift-dbus/compare/v0.1.0...v0.2.0
 - [v0.1.0]: https://github.com/tdelhaise/swift-dbus/releases/tag/v0.1.0
-

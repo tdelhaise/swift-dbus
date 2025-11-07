@@ -256,4 +256,191 @@ public enum DBusMarshal {
         }
         return result
     }
+
+    public static func decodeAllBasicArgs(_ message: DBusMessageRef) -> [DBusBasicValue] {
+        var iterator = DBusMessageIter()
+        guard dbus_message_iter_init(message.raw, &iterator) != 0 else { return [] }
+
+        var results: [DBusBasicValue] = []
+        while true {
+            let typeCode = dbus_message_iter_get_arg_type(&iterator)
+            if typeCode == 0 { break }  // DBUS_TYPE_INVALID
+            var copy = iterator
+            results.append(decodeSingleBasic(&copy))
+            _ = dbus_message_iter_next(&iterator)
+        }
+        return results
+    }
+
+    public static func appendBasic(
+        _ value: DBusBasicValue,
+        into iterator: inout DBusMessageIter
+    ) throws {
+        switch value {
+        case .string(let string):
+            try string.withCString { cString in
+                var pointer: UnsafePointer<CChar>? = cString
+                let ok = dbus_message_iter_append_basic(
+                    &iterator,
+                    DBusTypeCode.STRING,
+                    &pointer
+                )
+                if ok == 0 { throw DBusMarshalError.appendFailed("string") }
+            }
+        case .int32(var intValue):
+            let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.INT32, &intValue)
+            if ok == 0 { throw DBusMarshalError.appendFailed("int32") }
+        case .bool(let boolValue):
+            var dbusBool: dbus_bool_t = boolValue ? 1 : 0
+            let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.BOOLEAN, &dbusBool)
+            if ok == 0 { throw DBusMarshalError.appendFailed("bool") }
+        case .double(var doubleValue):
+            let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.DOUBLE, &doubleValue)
+            if ok == 0 { throw DBusMarshalError.appendFailed("double") }
+        case .stringArray, .unsupported:
+            throw DBusMarshalError.appendFailed("unsupported basic value")
+        }
+    }
+
+    public static func appendVariant(
+        of value: DBusBasicValue,
+        into iterator: inout DBusMessageIter
+    ) throws {
+        guard let signature = value.typeSignature else {
+            throw DBusMarshalError.appendFailed("variant signature unsupported")
+        }
+
+        var variantIter = DBusMessageIter()
+        let opened = signature.withCString { cSignature in
+            dbus_message_iter_open_container(
+                &iterator,
+                DBusTypeCode.VARIANT,
+                cSignature,
+                &variantIter
+            )
+        }
+        if opened == 0 {
+            throw DBusMarshalError.openContainerFailed("variant")
+        }
+
+        try appendBasic(value, into: &variantIter)
+
+        let closed = dbus_message_iter_close_container(&iterator, &variantIter)
+        if closed == 0 {
+            throw DBusMarshalError.closeContainerFailed("variant")
+        }
+    }
+
+    public static func firstVariantBasic(_ message: DBusMessageRef) throws -> DBusBasicValue {
+        var iterator = DBusMessageIter()
+        guard dbus_message_iter_init(message.raw, &iterator) != 0 else {
+            throw DBusMarshalError.initIterFailed
+        }
+        return try decodeVariantBasic(&iterator)
+    }
+
+    public static func firstDictStringVariantBasics(_ message: DBusMessageRef) throws -> [String: DBusBasicValue] {
+        var iterator = DBusMessageIter()
+        guard dbus_message_iter_init(message.raw, &iterator) != 0 else {
+            throw DBusMarshalError.initIterFailed
+        }
+        guard dbus_message_iter_get_arg_type(&iterator) == DBusTypeCode.ARRAY else {
+            throw DBusMarshalError.invalidType(
+                expected: DBusTypeCode.ARRAY, got: dbus_message_iter_get_arg_type(&iterator))
+        }
+
+        var dictIter = DBusMessageIter()
+        dbus_message_iter_recurse(&iterator, &dictIter)
+
+        var result: [String: DBusBasicValue] = [:]
+        while true {
+            let entryType = dbus_message_iter_get_arg_type(&dictIter)
+            if entryType == 0 { break }
+            guard entryType == DBusTypeCode.DICT_ENTRY else {
+                throw DBusMarshalError.invalidType(expected: DBusTypeCode.DICT_ENTRY, got: entryType)
+            }
+
+            var entryIter = DBusMessageIter()
+            dbus_message_iter_recurse(&dictIter, &entryIter)
+
+            guard dbus_message_iter_get_arg_type(&entryIter) == DBusTypeCode.STRING else {
+                throw DBusMarshalError.invalidType(
+                    expected: DBusTypeCode.STRING, got: dbus_message_iter_get_arg_type(&entryIter))
+            }
+
+            var keyPointer: UnsafePointer<CChar>?
+            dbus_message_iter_get_basic(&entryIter, &keyPointer)
+            let key = keyPointer.map { String(cString: $0) } ?? ""
+
+            guard dbus_message_iter_next(&entryIter) != 0 else {
+                result[key] = .unsupported(DBusTypeCode.VARIANT)
+                continue
+            }
+
+            var variantIter = entryIter
+            let value = try decodeVariantBasic(&variantIter)
+            result[key] = value
+
+            _ = dbus_message_iter_next(&dictIter)
+        }
+
+        return result
+    }
+
+    private static func decodeVariantBasic(_ iterator: inout DBusMessageIter) throws -> DBusBasicValue {
+        let type = dbus_message_iter_get_arg_type(&iterator)
+        guard type == DBusTypeCode.VARIANT else {
+            throw DBusMarshalError.invalidType(expected: DBusTypeCode.VARIANT, got: type)
+        }
+        var variantIter = DBusMessageIter()
+        dbus_message_iter_recurse(&iterator, &variantIter)
+        return decodeSingleBasic(&variantIter)
+    }
+
+    private static func decodeSingleBasic(_ iterator: inout DBusMessageIter) -> DBusBasicValue {
+        let typeCode = dbus_message_iter_get_arg_type(&iterator)
+
+        switch typeCode {
+        case DBusTypeCode.STRING:
+            var pointer: UnsafePointer<CChar>?
+            dbus_message_iter_get_basic(&iterator, &pointer)
+            return .string(pointer.map { String(cString: $0) } ?? "")
+        case DBusTypeCode.INT32:
+            var intValue: Int32 = 0
+            dbus_message_iter_get_basic(&iterator, &intValue)
+            return .int32(intValue)
+        case DBusTypeCode.BOOLEAN:
+            var boolRaw: dbus_bool_t = 0
+            dbus_message_iter_get_basic(&iterator, &boolRaw)
+            return .bool(boolRaw != 0)
+        case DBusTypeCode.DOUBLE:
+            var doubleValue: Double = 0
+            dbus_message_iter_get_basic(&iterator, &doubleValue)
+            return .double(doubleValue)
+        case DBusTypeCode.ARRAY:
+            return decodeStringArray(&iterator)
+        default:
+            return .unsupported(typeCode)
+        }
+    }
+
+    private static func decodeStringArray(_ iterator: inout DBusMessageIter) -> DBusBasicValue {
+        var arrayIter = DBusMessageIter()
+        dbus_message_iter_recurse(&iterator, &arrayIter)
+
+        var strings: [String] = []
+        while true {
+            let elementType = dbus_message_iter_get_arg_type(&arrayIter)
+            if elementType == 0 { break }
+            guard elementType == DBusTypeCode.STRING else {
+                return .unsupported(DBusTypeCode.ARRAY)
+            }
+            var pointer: UnsafePointer<CChar>?
+            dbus_message_iter_get_basic(&arrayIter, &pointer)
+            strings.append(pointer.map { String(cString: $0) } ?? "")
+            _ = dbus_message_iter_next(&arrayIter)
+        }
+
+        return .stringArray(strings)
+    }
 }

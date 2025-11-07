@@ -79,6 +79,7 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
     case int32(Int32)
     case bool(Bool)
     case double(Double)
+    case stringArray([String])
     /// Rencontré mais non géré (struct/array/variant/other types)
     case unsupported(Int32)
 
@@ -92,8 +93,42 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
             return "bool(\(value))"
         case .double(let value):
             return "double(\(value))"
+        case .stringArray(let values):
+            return "stringArray(\(values))"
         case .unsupported(let type):
             return "unsupported(type:\(type))"
+        }
+    }
+}
+
+extension DBusBasicValue {
+    var dbusTypeCode: Int32? {
+        switch self {
+        case .string:
+            return DBusTypeCode.STRING
+        case .int32:
+            return DBusTypeCode.INT32
+        case .bool:
+            return DBusTypeCode.BOOLEAN
+        case .double:
+            return DBusTypeCode.DOUBLE
+        case .stringArray, .unsupported:
+            return nil
+        }
+    }
+
+    var typeSignature: String? {
+        switch self {
+        case .string:
+            return "s"
+        case .int32:
+            return "i"
+        case .bool:
+            return "b"
+        case .double:
+            return "d"
+        case .stringArray, .unsupported:
+            return nil
         }
     }
 }
@@ -162,7 +197,7 @@ extension DBusConnection {
                         path: dbus_message_get_path(message.raw).map { String(cString: $0) },
                         interface: dbus_message_get_interface(message.raw).map { String(cString: $0) },
                         member: dbus_message_get_member(message.raw).map { String(cString: $0) },
-                        args: decodeAllBasicArgs(message)
+                        args: DBusMarshal.decodeAllBasicArgs(message)
                     )
 
                     // Vérification locale facultative selon la rule
@@ -277,45 +312,3 @@ private func sendSingleStringArgRaw(
     }
 }
 // swiftlint:enable function_parameter_count
-
-// MARK: - Decode utilitaire (basics uniquement)
-
-@inline(__always)
-private func decodeAllBasicArgs(_ message: DBusMessageRef) -> [DBusBasicValue] {
-    var iterator = DBusMessageIter()
-    guard dbus_message_iter_init(message.raw, &iterator) != 0 else { return [] }
-
-    var results: [DBusBasicValue] = []
-    while true {
-        let typeCode = dbus_message_iter_get_arg_type(&iterator)
-        if typeCode == 0 { break }  // DBUS_TYPE_INVALID
-
-        switch typeCode {
-        case DBusTypeCode.STRING:
-            var pointerString: UnsafePointer<CChar>?
-            dbus_message_iter_get_basic(&iterator, &pointerString)
-            results.append(.string(pointerString.map { String(cString: $0) } ?? ""))
-
-        case DBusTypeCode.INT32:
-            var intValue: Int32 = 0
-            dbus_message_iter_get_basic(&iterator, &intValue)
-            results.append(.int32(intValue))
-
-        case DBusTypeCode.BOOLEAN:
-            var boolRaw: dbus_bool_t = 0
-            dbus_message_iter_get_basic(&iterator, &boolRaw)
-            results.append(.bool(boolRaw != 0))
-
-        case DBusTypeCode.DOUBLE:
-            var doubleValue: Double = 0
-            dbus_message_iter_get_basic(&iterator, &doubleValue)
-            results.append(.double(doubleValue))
-
-        default:
-            results.append(.unsupported(typeCode))
-        }
-
-        _ = dbus_message_iter_next(&iterator)
-    }
-    return results
-}

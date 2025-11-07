@@ -79,6 +79,34 @@ for await signal in try connection.signals(matching: rule) {
 
 L’API `signals(matching:)` inscrit automatiquement la règle côté bus (`AddMatch`) et la retire (`RemoveMatch`) à la fin du flux.
 
+### Proxy haut niveau (WIP M4)
+
+```swift
+let proxy = DBusProxy(
+    connection: connection,
+    destination: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    interface: "org.freedesktop.DBus"
+)
+
+let busId = try proxy.callExpectingFirstString("GetId")
+
+for await change in try proxy.signals(member: "NameOwnerChanged", arg0: "org.example.App") {
+    print("Change: \(change.args)")
+}
+```
+
+### Propriétés via `org.freedesktop.DBus.Properties`
+
+```swift
+if case .stringArray(let features) = try proxy.getProperty("Features") {
+    print("Bus features: \(features)")
+}
+
+let all = try proxy.getAllProperties()
+print(all.keys)
+```
+
 ## CI (Ubuntu)
 
 Un workflow GitHub Actions est fourni pour builder et tester sur `ubuntu-24.04` avec Swift 6.2.

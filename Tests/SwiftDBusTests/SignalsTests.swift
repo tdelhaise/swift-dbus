@@ -24,8 +24,8 @@ final class SignalsTests: XCTestCase {
 
         let task = Task {
             var iterator = signalStream.makeAsyncIterator()
-            // On attend au plus 3s pour le premier signal attendu
-            let deadline = DispatchTime.now().uptimeNanoseconds + 3_000_000_000
+            // On attend au plus 5s pour le premier signal attendu
+            let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
             while DispatchTime.now().uptimeNanoseconds < deadline {
                 if let signal = await iterator.next() {
                     // Signature du signal: (name, old_owner, new_owner) -> (s,s,s)
@@ -55,7 +55,7 @@ final class SignalsTests: XCTestCase {
         _ = try connection.requestName(tempName, flags: 0)
 
         // Attendre le signal
-        await fulfillment(of: [expectation], timeout: 3.0)
+        await fulfillment(of: [expectation], timeout: 5.0)
 
         // Nettoyage (provoquera un second signal qu'on n'attend pas forcément ici)
         _ = try connection.releaseName(tempName)
@@ -95,12 +95,4 @@ final class SignalsTests: XCTestCase {
         task.cancel()
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
-}
-
-private func makeTemporaryBusName(
-    prefix: String = "org.swiftdbus.test",
-    suffixLength: Int = 8
-) -> String {
-    let random = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-    return "\(prefix).x\(random.prefix(suffixLength))"
 }

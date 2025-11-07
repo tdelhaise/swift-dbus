@@ -1,245 +1,352 @@
 import CDbus
 import Dispatch
+import Foundation
 
 public final class DBusConnection: @unchecked Sendable {
+
+    // MARK: - Types
+
     public enum Bus {
-        case session, system
-        fileprivate var raw: DBusBusType { self == .session ? DBUS_BUS_SESSION : DBUS_BUS_SYSTEM }
+        case session
+        case system
+
+        /// Conversion vers la constante C
+        var cValue: DBusBusType {
+            switch self {
+            case .session:
+                return DBUS_BUS_SESSION
+            case .system:
+                return DBUS_BUS_SYSTEM
+            }
+        }
     }
 
     public enum Error: Swift.Error, CustomStringConvertible {
         case failed(String)
+        case invalid(String)
+
         public var description: String {
             switch self {
             case .failed(let message):
-                return message
+                return "DBusConnection.failed(\(message))"
+            case .invalid(let message):
+                return "DBusConnection.invalid(\(message))"
             }
         }
     }
 
-    private var raw: OpaquePointer?
+    // MARK: - State
+
+    /// Pointeur C sous-jacent (exposé au module pour Signals.swift)
+    internal var raw: OpaquePointer?
     private var source: DispatchSourceRead?
     private let workQueue = DispatchQueue(label: "swift-dbus.connection", qos: .userInitiated)
+    private var messageContinuations: [UUID: AsyncStream<DBusMessageRef>.Continuation] = [:]
+    private let continuationsLock = NSLock()
 
-    // MARK: Init / Deinit
+    public init() {}
 
-    public init(bus: Bus) throws {
-        self.raw = try withDBusError { errorPointer in
-            dbus_bus_get(bus.raw, errorPointer)
-        }
-        guard self.raw != nil else {
-            throw Error.failed("dbus_bus_get returned nil")
-        }
-
-        dbus_connection_set_exit_on_disconnect(self.raw, 0)
-        _ = dbus_connection_set_timeout_functions(self.raw, nil, nil, nil, nil, nil)
+    public convenience init(bus: Bus) throws {
+        self.init()
+        try open(bus)
     }
 
     deinit {
-        stopPump()
-        if let connectionPointer = raw {
-            dbus_connection_unref(connectionPointer)
+        finishAllMessageContinuations()
+        source?.cancel()
+        source = nil
+        if let pointer = raw {
+            dbus_connection_unref(pointer)
         }
+        raw = nil
     }
 
-    // MARK: Infos
+    // MARK: - Open
 
+    /// Ouvre une nouvelle connexion DBus sur le bus indiqué.
+    @discardableResult
+    public static func open(_ bus: Bus) throws -> DBusConnection {
+        let connection = DBusConnection()
+        try connection.open(bus)
+        return connection
+    }
+
+    public func open(_ bus: Bus) throws {
+        if raw != nil { return }
+
+        let connectionPointer: OpaquePointer? = try withDBusError { errorPointer in
+            dbus_bus_get(bus.cValue, errorPointer)
+        }
+
+        guard let connectionPointer else {
+            throw Error.failed("dbus_bus_get returned null")
+        }
+
+        dbus_connection_set_exit_on_disconnect(connectionPointer, 0)
+        raw = connectionPointer
+
+        // Préparation de la source d'événements
+        var fd: Int32 = -1
+        let gotFD = dbus_connection_get_unix_fd(connectionPointer, &fd)
+        guard gotFD != 0, fd >= 0 else {
+            throw Error.failed("dbus_connection_get_unix_fd failed")
+        }
+
+        let readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: workQueue)
+        readSource.setEventHandler { [weak self] in
+            guard let self, let connection = self.raw else { return }
+            _ = dbus_connection_read_write(connection, 0)
+            self.drainMessages(connection)
+        }
+        source = readSource
+        readSource.resume()
+    }
+
+    // MARK: - Unique name
+
+    /// Renvoie le nom unique (ex: ":1.42").
     public func uniqueName() throws -> String {
-        guard let connectionPointer = raw else {
+        guard let connection = raw else {
             throw Error.failed("connection is nil")
         }
-        guard let cString = dbus_bus_get_unique_name(connectionPointer) else {
-            throw Error.failed("unique name is nil")
+        guard let cString = dbus_bus_get_unique_name(connection) else {
+            throw Error.failed("dbus_bus_get_unique_name returned null")
         }
         return String(cString: cString)
     }
 
-    /// Récupère le file descriptor sous-jacent (non bloquant).
-    public func unixFD() throws -> Int32 {
-        guard let connectionPointer = raw else {
+    // MARK: - Messages stream
+
+    /// Crée un flux asynchrone de messages DBus.
+    public func messages() throws -> AsyncStream<DBusMessageRef> {
+        guard raw != nil else {
             throw Error.failed("connection is nil")
         }
-        var fileDescriptor: Int32 = -1
-        if dbus_connection_get_unix_fd(connectionPointer, &fileDescriptor) == 0 || fileDescriptor < 0 {
-            throw Error.failed("dbus_connection_get_unix_fd failed")
-        }
-        return fileDescriptor
-    }
 
-    // MARK: Pump & Messages
-
-    /// Démarre une boucle I/O et renvoie un flux de messages entrants.
-    /// Le flux se termine si la source est annulée (via `stopPump()` ou deinit).
-    public func messages() throws -> AsyncStream<DBusMessageRef> {
-        let fileDescriptor = try unixFD()
-        let stream = AsyncStream<DBusMessageRef> { continuation in
+        return AsyncStream<DBusMessageRef> { continuation in
+            let token = self.registerMessageContinuation(continuation)
             workQueue.async { [weak self] in
-                guard let self, let connectionPointer = self.raw else {
+                guard let self, let connection = self.raw else {
                     continuation.finish()
                     return
                 }
+                self.drainMessages(connection)
+            }
 
-                let readSource = DispatchSource.makeReadSource(
-                    fileDescriptor: fileDescriptor,
-                    queue: self.workQueue
-                )
-                self.source = readSource
-
-                readSource.setEventHandler { [weak self] in
-                    guard let self, let connectionPointer = self.raw else {
-                        continuation.finish()
-                        return
-                    }
-                    _ = dbus_connection_read_write_dispatch(connectionPointer, 0)
-                    while let messagePointer = dbus_connection_pop_message(connectionPointer) {
-                        let messageRef = DBusMessageRef(taking: messagePointer)
-                        continuation.yield(messageRef)
-                    }
-                }
-
-                readSource.setCancelHandler {
-                    continuation.finish()
-                }
-
-                readSource.resume()
-
-                _ = dbus_connection_read_write_dispatch(connectionPointer, 0)
-                while let messagePointer = dbus_connection_pop_message(connectionPointer) {
-                    continuation.yield(DBusMessageRef(taking: messagePointer))
-                }
+            continuation.onTermination = { [weak self] _ in
+                self?.removeMessageContinuation(token)
             }
         }
-        return stream
     }
 
-    public func stopPump() {
-        workQueue.sync {
-            source?.cancel()
-            source = nil
+    /// Draine la file DBus et diffuse les messages aux continuations enregistrées.
+    private func drainMessages(_ connection: OpaquePointer) {
+        while true {
+            guard let rawMessage = dbus_connection_pop_message(connection) else { break }
+
+            let ref = DBusMessageRef(taking: rawMessage)
+            broadcastMessage(ref)
         }
     }
-}
 
-// MARK: - Appels (M2 / M2.1 / M2.2)
+    /// Arrête la source d'événements et termine les streams messages actifs.
+    public func stopPump() {
+        finishAllMessageContinuations()
+        source?.cancel()
+        source = nil
+    }
 
-extension DBusConnection {
-    /// Envoie un appel DBus et renvoie la réponse brute (ou jette sur erreur DBus).
+    // MARK: - Appels synchrones bas niveau
+
+    // swiftlint:disable function_parameter_count
+    /// Appel méthode générique, avec écriture d’arguments via closure.
     public func callRaw(
         destination: String,
         path: String,
         interface: String,
         method: String,
-        timeoutMS: Int32 = 2000
+        timeoutMS: Int32,
+        argsWriter: (inout DBusMessageIter) throws -> Void
     ) throws -> DBusMessageRef {
-        guard let connectionPointer = raw else {
+        guard let connection = raw else {
             throw Error.failed("connection is nil")
         }
 
-        let requestMessage = try DBusMessageBuilder.methodCall(
-            destination: destination,
-            path: path,
-            interface: interface,
-            method: method
-        )
-
-        let replyPointer: OpaquePointer? = try withDBusError { errorPointer in
-            dbus_connection_send_with_reply_and_block(
-                connectionPointer,
-                requestMessage.raw,
-                timeoutMS,
-                errorPointer
-            )
-        }
-        guard let nonNullReplyPointer = replyPointer else {
-            throw Error.failed("send_with_reply_and_block returned nil")
+        guard
+            let message = destination.withCString({ destPtr in
+                path.withCString { pathPtr in
+                    interface.withCString { ifacePtr in
+                        method.withCString { methPtr in
+                            dbus_message_new_method_call(destPtr, pathPtr, ifacePtr, methPtr)
+                        }
+                    }
+                }
+            })
+        else {
+            throw Error.failed("dbus_message_new_method_call failed")
         }
 
-        let typeCode = dbus_message_get_type(nonNullReplyPointer)
-        if typeCode == DBusMsgType.ERROR {
-            let errorName =
-                dbus_message_get_error_name(nonNullReplyPointer).map { String(cString: $0) }
+        var iterator = DBusMessageIter()
+        dbus_message_iter_init_append(message, &iterator)
+        do {
+            try argsWriter(&iterator)
+        } catch {
+            dbus_message_unref(message)
+            throw error
+        }
+
+        // Envoi synchrone avec timeout
+        let replyPointer = dbus_connection_send_with_reply_and_block(connection, message, timeoutMS, nil)
+        dbus_message_unref(message)
+
+        guard let replyPointer else {
+            throw Error.failed("no reply from bus")
+        }
+
+        // Vérifie s’il s’agit d’une erreur DBus
+        let type = dbus_message_get_type(replyPointer)
+        if type == DBusMsgType.ERROR {
+            let name =
+                dbus_message_get_error_name(replyPointer).map { String(cString: $0) }
                 ?? "org.freedesktop.DBus.Error.Failed"
-            throw DBusMessageError.dbusError(name: errorName, message: "DBus returned error")
+            dbus_message_unref(replyPointer)
+            throw Error.failed("DBus error: \(name) for \(interface).\(method)")
         }
 
-        return DBusMessageRef(taking: nonNullReplyPointer)
+        return DBusMessageRef(taking: replyPointer)
+    }
+    // swiftlint:enable function_parameter_count
+
+    // MARK: - Bus names
+
+    /// Demande un nom de bus (org.example.App). Retourne le code DBus_REQUEST_NAME_REPLY_*.
+    @discardableResult
+    public func requestName(_ name: String, flags: UInt32 = 0) throws -> Int32 {
+        guard let connection = raw else {
+            throw Error.failed("connection is nil")
+        }
+
+        let result: Int32 = try withDBusError { errorPointer in
+            name.withCString { cName in
+                dbus_bus_request_name(connection, cName, flags, errorPointer)
+            }
+        }
+        return result
     }
 
-    /// org.freedesktop.DBus.GetId() -> String
+    /// Relâche un nom de bus précédemment acquis.
+    @discardableResult
+    public func releaseName(_ name: String) throws -> Int32 {
+        guard let connection = raw else {
+            throw Error.failed("connection is nil")
+        }
+
+        let result: Int32 = try withDBusError { errorPointer in
+            name.withCString { cName in
+                dbus_bus_release_name(connection, cName, errorPointer)
+            }
+        }
+        return result
+    }
+
+    // MARK: - org.freedesktop.DBus helpers
+
     public func getBusId(timeoutMS: Int32 = 2000) throws -> String {
-        let replyMessage = try callRaw(
+        let reply = try callRaw(
             destination: "org.freedesktop.DBus",
             path: "/org/freedesktop/DBus",
             interface: "org.freedesktop.DBus",
             method: "GetId",
             timeoutMS: timeoutMS
-        )
-        return try DBusMessageDecode.firstString(replyMessage)
+        ) { _ in }
+        return try DBusMarshal.firstString(reply)
     }
 
-    /// org.freedesktop.DBus.Peer.Ping() -> aucune valeur
-    public func pingPeer(
-        destination: String = "org.freedesktop.DBus",
-        path: String = "/org/freedesktop/DBus",
-        interface: String = "org.freedesktop.DBus.Peer",
-        timeoutMS: Int32 = 2000
-    ) throws {
-        _ = try callRaw(
-            destination: destination,
-            path: path,
-            interface: interface,
-            method: "Ping",
-            timeoutMS: timeoutMS
-        )
-    }
-
-    /// org.freedesktop.DBus.GetNameOwner(name: s) -> s
-    public func getNameOwner(_ wellKnownName: String, timeoutMS: Int32 = 2000) throws -> String {
-        guard let connectionPointer = raw else {
-            throw Error.failed("connection is nil")
-        }
-
-        let requestMessage = try DBusMessageBuilder.methodCall1StringArg(
+    public func getNameOwner(_ name: String, timeoutMS: Int32 = 2000) throws -> String {
+        let reply = try callRaw(
             destination: "org.freedesktop.DBus",
             path: "/org/freedesktop/DBus",
             interface: "org.freedesktop.DBus",
             method: "GetNameOwner",
-            arg: wellKnownName
-        )
-
-        let replyPointer: OpaquePointer? = try withDBusError { errorPointer in
-            dbus_connection_send_with_reply_and_block(
-                connectionPointer,
-                requestMessage.raw,
-                timeoutMS,
-                errorPointer
-            )
+            timeoutMS: timeoutMS
+        ) { iterator in
+            try name.withCString { cString in
+                var pointer: UnsafePointer<CChar>? = cString
+                let ok = dbus_message_iter_append_basic(&iterator, DBusTypeCode.STRING, &pointer)
+                if ok == 0 {
+                    throw Error.failed("failed to append string argument for GetNameOwner")
+                }
+            }
         }
-        guard let nonNullReplyPointer = replyPointer else {
-            throw Error.failed("send_with_reply_and_block returned nil")
-        }
-
-        let typeCode = dbus_message_get_type(nonNullReplyPointer)
-        if typeCode == DBusMsgType.ERROR {
-            let errorName =
-                dbus_message_get_error_name(nonNullReplyPointer).map { String(cString: $0) }
-                ?? "org.freedesktop.DBus.Error.Failed"
-            throw DBusMessageError.dbusError(name: errorName, message: "DBus returned error")
-        }
-
-        let replyMessage = DBusMessageRef(taking: nonNullReplyPointer)
-        return try DBusMessageDecode.firstString(replyMessage)
+        return try DBusMarshal.firstString(reply)
     }
 
-    /// org.freedesktop.DBus.ListNames() -> as
     public func listNames(timeoutMS: Int32 = 2000) throws -> [String] {
-        let replyMessage = try callRaw(
+        let reply = try callRaw(
             destination: "org.freedesktop.DBus",
             path: "/org/freedesktop/DBus",
             interface: "org.freedesktop.DBus",
             method: "ListNames",
             timeoutMS: timeoutMS
-        )
-        return try DBusMessageDecode.firstArrayOfStrings(replyMessage)
+        ) { _ in }
+        return try DBusMarshal.firstArrayOfStrings(reply)
+    }
+
+    public func pingPeer(timeoutMS: Int32 = 2000) throws {
+        _ = try callRaw(
+            destination: "org.freedesktop.DBus",
+            path: "/org/freedesktop/DBus",
+            interface: "org.freedesktop.DBus.Peer",
+            method: "Ping",
+            timeoutMS: timeoutMS
+        ) { _ in }
+    }
+
+    public func getMachineId(timeoutMS: Int32 = 2000) throws -> String {
+        let reply = try callRaw(
+            destination: "org.freedesktop.DBus",
+            path: "/org/freedesktop/DBus",
+            interface: "org.freedesktop.DBus",
+            method: "GetMachineId",
+            timeoutMS: timeoutMS
+        ) { _ in }
+        return try DBusMarshal.firstString(reply)
+    }
+
+    // MARK: - Message continuation bookkeeping
+
+    private func registerMessageContinuation(
+        _ continuation: AsyncStream<DBusMessageRef>.Continuation
+    ) -> UUID {
+        continuationsLock.lock()
+        defer { continuationsLock.unlock() }
+        let token = UUID()
+        messageContinuations[token] = continuation
+        return token
+    }
+
+    private func removeMessageContinuation(_ token: UUID) {
+        continuationsLock.lock()
+        messageContinuations.removeValue(forKey: token)
+        continuationsLock.unlock()
+    }
+
+    private func broadcastMessage(_ message: DBusMessageRef) {
+        continuationsLock.lock()
+        let continuations = Array(messageContinuations.values)
+        continuationsLock.unlock()
+        for continuation in continuations {
+            continuation.yield(message)
+        }
+    }
+
+    private func finishAllMessageContinuations() {
+        continuationsLock.lock()
+        let continuations = Array(messageContinuations.values)
+        messageContinuations.removeAll()
+        continuationsLock.unlock()
+        for continuation in continuations {
+            continuation.finish()
+        }
     }
 }

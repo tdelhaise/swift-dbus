@@ -20,16 +20,16 @@
 ## Milestones
 
 ### M0 — Foundations & Qualité
-- [ ] **Erreurs** : `DBusError` ↔︎ `Swift Error`, helpers (init/free), mapping codes.
-- [ ] **Gestion mémoire** : wrappers RAII pour `DBusMessage`, `DBusPendingCall`, `DBusConnection` (unref/ref).
+- [x] **Erreurs** : `DBusError` ↔︎ `Swift Error`, helpers (init/free), mapping codes.
+- [x] **Gestion mémoire** : wrappers RAII pour `DBusMessage`, `DBusPendingCall`, `DBusConnection` (unref/ref).
 - [ ] **Build Matrix CI** : Ubuntu 24.04 + Swift 6.2 (déjà fait), ajouter 22.04 & 24.10 si possible.
-- [ ] **Lint/format** : `swift-format`/`swiftlint` (optionnel).
+- [x] **Lint/format** : `swift-format`/`swiftlint` (optionnel).
 
 ### M1 — Connexions & Boucle I/O
-- [ ] `DBusConnection(session|system)` + options (auth, unique name).
-- [ ] **Integr. I/O** : *non-blocking* file descriptor, intégration `epoll`/`DispatchSource` -> *pump* de la connexion.
-- [ ] **Async** : `receive()` async, `messages()` -> `AsyncStream<DBusMessage>`.
-- [ ] **Ping/Self-Test** : appel `org.freedesktop.DBus.Hello`, `GetId`.
+- [x] `DBusConnection(session|system)` + options (auth, unique name).
+- [x] **Integr. I/O** : *non-blocking* file descriptor, intégration `epoll`/`DispatchSource` -> *pump* de la connexion.
+- [x] **Async** : `receive()` async, `messages()` -> `AsyncStream<DBusMessage>`.
+- [x] **Ping/Self-Test** : appel `org.freedesktop.DBus.Hello`, `GetId`.
 
 ### M2 — Messages & Types
 - [ ] **Construction/parse** de `DBusMessage` (Call, Return, Error, Signal).
@@ -38,9 +38,9 @@
 - [ ] **Codable Bridge** (v1) : `DBusEncodable/DBusDecodable` minimal pour structs Swift.
 
 ### M3 — Bus API (org.freedesktop.DBus)
-- [ ] **Request/ReleaseName**, **ListNames**, **NameOwnerChanged** (signal -> `AsyncStream`).
-- [ ] **Add/RemoveMatch** pour filtres signaux.
-- [ ] **Peer**: `Ping`, `GetMachineId`.
+- [x] **Request/ReleaseName**, **ListNames**, **NameOwnerChanged** (signal -> `AsyncStream`).
+- [x] **Add/RemoveMatch** pour filtres signaux.
+- [x] **Peer**: `Ping`, `GetMachineId`.
 - [ ] **Monitoring** (optionnel, behind a flag).
 
 ### M4 — Proxies Client

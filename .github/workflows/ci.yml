@@ -27,9 +27,7 @@ jobs:
         run: swift build -v
 
       - name: Test (session bus)
-        run: |
-          dbus-run-session -- bash -lc 'swift test -v'
-          # dbus-run-session starts a session dbus-daemon for the duration of the command
+        run: bash scripts/test.sh -v
 
   noble:
     runs-on: ubuntu-22.04
@@ -50,6 +48,4 @@ jobs:
         run: swift build -v
 
       - name: Test (session bus)
-        run: |
-          dbus-run-session -- bash -lc 'swift test -v'
-
+        run: bash scripts/test.sh -v

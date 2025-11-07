@@ -33,6 +33,13 @@ swift run swift-dbus-examples
 
 Vous devriez voir la version de `libdbus` ainsi qu'un indicateur de disponibilité.
 
+## Tests & Qualité
+
+- `bash scripts/test.sh` – lance `swift test` dans un `dbus-run-session` dédié (utile sur CI/sandbox).
+- `bash scripts/format.sh` – applique `swift-format` puis `swiftlint --fix && lint --strict`.
+
+Les tests d’intégration ouvrent un vrai bus session temporaire, requièrent donc `libdbus-1` et `dbus-run-session`.
+
 ## Structure
 
 - `Package.swift` – Dépendance système vers `libdbus-1` via un target `.systemLibrary` (`CDbus`).
@@ -40,6 +47,37 @@ Vous devriez voir la version de `libdbus` ainsi qu'un indicateur de disponibilit
 - `Sources/SwiftDBus` – API Swift de plus haut niveau (placeholder à étendre).
 - `Sources/swift-dbus-examples` – Petit binaire de démonstration.
 - `Tests/SwiftDBusTests` – Tests unitaires minimalistes.
+
+## Aperçu API
+
+### Connexion & appels bus
+
+```swift
+let connection = try DBusConnection(bus: .session)
+
+_ = try connection.requestName("org.example.App")
+let id = try connection.getBusId()
+let machineId = try connection.getMachineId()
+let names = try connection.listNames()
+let owner = try connection.getNameOwner("org.freedesktop.DBus")
+try connection.pingPeer()
+```
+
+### Écouter un signal typé
+
+```swift
+let rule = DBusMatchRule.signal(
+    interface: "org.freedesktop.DBus",
+    member: "NameOwnerChanged",
+    arg0: "org.example.App"
+)
+
+for await signal in try connection.signals(matching: rule) {
+    print("Signal from \(signal.sender ?? "-"): \(signal.args)")
+}
+```
+
+L’API `signals(matching:)` inscrit automatiquement la règle côté bus (`AddMatch`) et la retire (`RemoveMatch`) à la fin du flux.
 
 ## CI (Ubuntu)
 
@@ -54,4 +92,3 @@ La feuille de route détaillant les différentes étapes (wrappers bas niveau, A
 👉 [Consulter la ROADMAP →](./ROADMAP.md)
 
 Tu y trouveras la progression prévue, les milestones et les futurs objectifs de compatibilité et d’outillage.
-

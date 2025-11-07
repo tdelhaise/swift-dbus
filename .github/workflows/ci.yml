@@ -15,20 +15,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install D-Bus headers
-        run: apt-get update && apt-get install -y libdbus-1-dev pkg-config
-
-      - name: Debug toolchain & dbus
+      - name: Install D-Bus deps
         run: |
+          apt-get update
+          apt-get install -y libdbus-1-dev pkg-config dbus
+          # optional debug
           swift --version
           pkg-config --modversion dbus-1
-          ls -R Sources/CDbus || true
 
       - name: Build
         run: swift build -v
 
-      - name: Test
-        run: swift test -v
+      - name: Test (session bus)
+        run: |
+          dbus-run-session -- bash -lc 'swift test -v'
+          # dbus-run-session starts a session dbus-daemon for the duration of the command
 
   noble:
     runs-on: ubuntu-22.04
@@ -38,18 +39,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install D-Bus headers
-        run: apt-get update && apt-get install -y libdbus-1-dev pkg-config
-
-      - name: Debug toolchain & dbus
+      - name: Install D-Bus deps
         run: |
+          apt-get update
+          apt-get install -y libdbus-1-dev pkg-config dbus
           swift --version
           pkg-config --modversion dbus-1
-          ls -R Sources/CDbus || true
 
       - name: Build
         run: swift build -v
 
-      - name: Test
-        run: swift test -v
+      - name: Test (session bus)
+        run: |
+          dbus-run-session -- bash -lc 'swift test -v'
 

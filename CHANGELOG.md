@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v0.3.1] - 2025-11-07
+### Fixed
+- CI: exécute les tests sous `dbus-run-session` et installe `dbus` pour fournir un session bus en environnement conteneurisé (jammy/noble).
+
+---
+
 ## [v0.3.0] - 2025-11-07 — **M2: Minimal message call & decode**
 ### Added
 - `DBusCConstants.swift`: miroirs Swift des macros `dbus-protocol.h` (types, fragments de signatures, message types).

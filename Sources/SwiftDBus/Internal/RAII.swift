@@ -2,7 +2,7 @@
 import CDbus
 
 /// RAII pour DBusMessage*
-public final class DBusMessageRef {
+public final class DBusMessageRef: @unchecked Sendable {
     public let raw: OpaquePointer
 
     /// Prend "possession" d'un pointeur DBusMessage* (référence déjà détenue par l'appelant).

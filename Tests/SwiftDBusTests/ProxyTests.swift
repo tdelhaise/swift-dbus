@@ -50,12 +50,7 @@ final class ProxyTests: XCTestCase {
         let proxy = makeBusProxy(connection)
         let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.proxy.signal")
 
-        let stream = try proxy.signals(member: "NameOwnerChanged", arg0: tempName) { decoder in
-            let name: String = try decoder.next()
-            let oldOwner: String = try decoder.next()
-            let newOwner: String = try decoder.next()
-            return (name, oldOwner, newOwner)
-        }
+        let stream = try proxy.signals(NameOwnerChangedSignal.self, arg0: tempName)
 
         let _: UInt32 = try proxy.callExpectingSingle(
             "RequestName",
@@ -64,8 +59,11 @@ final class ProxyTests: XCTestCase {
 
         let received = await withTaskGroup(of: Bool.self) { group in
             group.addTask {
-                for await (name, _, newOwner) in stream where name == tempName {
-                    XCTAssertTrue(newOwner.hasPrefix(":"), "new owner should be unique name")
+                for await signal in stream where signal.name == tempName {
+                    XCTAssertTrue(
+                        signal.newOwner.hasPrefix(":"),
+                        "new owner should be unique name"
+                    )
                     return true
                 }
                 return false
@@ -153,5 +151,19 @@ private struct ListNamesResponse: DBusReturnDecodable {
 
     init(from decoder: inout DBusDecoder) throws {
         self.names = try decoder.next([String].self)
+    }
+}
+
+private struct NameOwnerChangedSignal: DBusSignalPayload {
+    static let member = "NameOwnerChanged"
+
+    let name: String
+    let oldOwner: String
+    let newOwner: String
+
+    init(from decoder: inout DBusDecoder) throws {
+        self.name = try decoder.next()
+        self.oldOwner = try decoder.next()
+        self.newOwner = try decoder.next()
     }
 }

@@ -87,6 +87,32 @@ public struct DBusSignal: CustomStringConvertible, Sendable {
     }
 }
 
+// MARK: - Typed signal decoding
+
+public protocol DBusSignalDecodable: Sendable {
+    static var member: String { get }
+    static var arg0: String? { get }
+    init(signal: DBusSignal, decoder: inout DBusDecoder) throws
+}
+
+extension DBusSignalDecodable {
+    public static var arg0: String? { nil }
+}
+
+public protocol DBusSignalPayload: DBusSignalDecodable, DBusReturnDecodable {}
+
+extension DBusSignalPayload {
+    public init(signal: DBusSignal, decoder: inout DBusDecoder) throws {
+        var payloadDecoder = decoder
+        let value = try Self(from: &payloadDecoder)
+        if !payloadDecoder.isAtEnd {
+            throw DBusDecodeError.missingValue(expected: "end of signal payload")
+        }
+        decoder = payloadDecoder
+        self = value
+    }
+}
+
 // MARK: - API Connexion (match, stream)
 
 extension DBusConnection {

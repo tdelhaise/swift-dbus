@@ -263,6 +263,32 @@ public struct DBusProxy: Sendable {
         }
     }
 
+    /// Variante encore plus typée : `T` fournit la métadonnée `member` + init depuis `DBusSignal`.
+    public func signals<T: DBusSignalDecodable>(
+        _ type: T.Type = T.self,
+        arg0 overrideArg0: String? = nil
+    ) throws -> AsyncStream<T> {
+        let stream = try signals(
+            member: type.member,
+            arg0: overrideArg0 ?? type.arg0
+        )
+        return AsyncStream<T> { continuation in
+            let task = Task {
+                for await signal in stream {
+                    var decoder = DBusDecoder(values: signal.args)
+                    do {
+                        let typed = try type.init(signal: signal, decoder: &decoder)
+                        continuation.yield(typed)
+                    } catch {
+                        continue
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     // MARK: - Properties helpers (org.freedesktop.DBus.Properties)
 
     public func getProperty(

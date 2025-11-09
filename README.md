@@ -151,16 +151,24 @@ print("Cached features \(cachedFeatures), live value \(refreshedFeatures)")
 ### Signaux typés via proxy
 
 ```swift
-let typedStream = try proxy.signals(member: "NameOwnerChanged", arg0: "org.example.App") { decoder in
-    (
-        try decoder.next(String.self),
-        try decoder.next(String.self),
-        try decoder.next(String.self)
-    )
+struct NameOwnerChangedSignal: DBusSignalPayload {
+    static let member = "NameOwnerChanged"
+
+    let name: String
+    let oldOwner: String
+    let newOwner: String
+
+    init(from decoder: inout DBusDecoder) throws {
+        name = try decoder.next()
+        oldOwner = try decoder.next()
+        newOwner = try decoder.next()
+    }
 }
 
-for await (name, oldOwner, newOwner) in typedStream {
-    print("\(name) moved from \(oldOwner) -> \(newOwner)")
+let typedStream = try proxy.signals(NameOwnerChangedSignal.self, arg0: "org.example.App")
+
+for await signal in typedStream {
+    print("\(signal.name) moved from \(signal.oldOwner) -> \(signal.newOwner)")
 }
 ```
 

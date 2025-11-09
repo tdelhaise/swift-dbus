@@ -48,6 +48,7 @@
 - [x] `call(method:args:signature:) async throws -> Return` (helpers `call(arguments:)`, `callExpectingBasics)`).
 - [x] **Signaux** : `proxy.signals("Interface", "Signal") -> AsyncStream<T>` (avec decode).
 - [x] **Propriétés** (org.freedesktop.DBus.Properties) : `Get`, `Set`, `GetAll` typés (variants basiques).
+- [ ] Hook d’invalidation auto du cache de propriétés (brancher sur signaux `PropertiesChanged`).
 
 ### M5 — Serveur / Export d’objets
 - [ ] `DBusObject` protocole Swift (méthodes, signaux, propriétés).

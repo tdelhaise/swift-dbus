@@ -75,12 +75,17 @@ let proxy = DBusProxy(
 
 let status: UInt32 = try proxy.callExpectingSingle(
     "RequestName",
-    arguments: [.string("org.example.App"), .uint32(0)]
+    typedArguments: DBusArguments("org.example.App", UInt32(0))
 )
 
-let names: [String] = try proxy.callExpecting("ListNames") { decoder in
+let names: [String] = try proxy.callExpecting(
+    "ListNames",
+    typedArguments: DBusArguments()
+) { decoder in
     try decoder.next([String].self)
 }
+
+// Helper DBusArguments(...) construit la liste d'arguments (ici String + UInt32)
 ```
 
 ### Écouter un signal typé

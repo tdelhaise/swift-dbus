@@ -91,7 +91,19 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
     }
 }
 
-public protocol DBusBasicEncodable {
+public protocol DBusArgumentEncodable {
+    func encodeArguments(into encoder: inout DBusArgumentEncoder) throws
+}
+
+public struct DBusArgumentEncoder {
+    fileprivate(set) var values: [DBusBasicValue] = []
+
+    public mutating func encode(_ value: DBusBasicValue) {
+        values.append(value)
+    }
+}
+
+public protocol DBusBasicEncodable: DBusArgumentEncodable {
     var dbusValue: DBusBasicValue { get }
 }
 
@@ -171,6 +183,44 @@ extension DBusBasicValue: DBusBasicDecodable {
     public static func decode(from value: DBusBasicValue) throws -> DBusBasicValue {
         value
     }
+}
+
+extension DBusBasicEncodable {
+    public func encodeArguments(into encoder: inout DBusArgumentEncoder) throws {
+        encoder.encode(dbusValue)
+    }
+}
+
+extension Array: DBusArgumentEncodable where Element: DBusBasicEncodable {
+    public func encodeArguments(into encoder: inout DBusArgumentEncoder) throws {
+        for element in self {
+            try element.encodeArguments(into: &encoder)
+        }
+    }
+}
+
+public struct DBusArgumentList: DBusArgumentEncodable, ExpressibleByArrayLiteral {
+    public var values: [DBusBasicValue]
+
+    public init(values: [DBusBasicValue]) {
+        self.values = values
+    }
+
+    public init(arrayLiteral elements: DBusBasicValue...) {
+        self.values = elements
+    }
+
+    public func encodeArguments(into encoder: inout DBusArgumentEncoder) throws {
+        for value in values {
+            encoder.encode(value)
+        }
+    }
+
+    public static var empty: DBusArgumentList { DBusArgumentList(values: []) }
+}
+
+public func DBusArguments(_ values: DBusBasicEncodable...) -> DBusArgumentList {
+    DBusArgumentList(values: values.map { $0.dbusValue })
 }
 
 public struct DBusDecoder {

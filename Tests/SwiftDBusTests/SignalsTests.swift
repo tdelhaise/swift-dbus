@@ -77,23 +77,32 @@ final class SignalsTests: XCTestCase {
         )
 
         let stream = try connection.signals(matching: rule)
-        let gotSignal = XCTestExpectation(description: "received filtered signal")
-
-        let task = Task {
-            for await signal in stream {
-                guard signal.member == "NameOwnerChanged" else { continue }
-                if case .string(let signalName)? = signal.args.first, signalName == name {
-                    gotSignal.fulfill()
-                    break
-                }
-            }
-        }
 
         _ = try connection.requestName(name)
-        await fulfillment(of: [gotSignal], timeout: 1.5)
-        _ = try connection.releaseName(name)
 
-        task.cancel()
+        let received = await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                for await signal in stream {
+                    guard signal.member == "NameOwnerChanged" else { continue }
+                    if case .string(let signalName)? = signal.args.first, signalName == name {
+                        return true
+                    }
+                }
+                return false
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                return false
+            }
+
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+
+        XCTAssertTrue(received, "should receive filtered NameOwnerChanged signal")
+
+        _ = try connection.releaseName(name)
         try? await Task.sleep(nanoseconds: 50_000_000)
     }
 }

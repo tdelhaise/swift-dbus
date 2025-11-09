@@ -31,16 +31,13 @@ final class ProxyTests: XCTestCase {
 
         let requestStatus: UInt32 = try proxy.callExpectingSingle(
             "RequestName",
-            arguments: [
-                .string(tempName),
-                .uint32(0)
-            ]
+            typedArguments: DBusArguments(tempName, UInt32(0))
         )
         XCTAssertNotEqual(requestStatus, 0, "request name should succeed")
 
         let releaseStatus: UInt32 = try proxy.callExpectingSingle(
             "ReleaseName",
-            arguments: [.string(tempName)]
+            typedArguments: DBusArguments(tempName)
         )
         XCTAssertNotEqual(releaseStatus, 0, "release name should succeed")
     }
@@ -62,7 +59,7 @@ final class ProxyTests: XCTestCase {
 
         let _: UInt32 = try proxy.callExpectingSingle(
             "RequestName",
-            arguments: [.string(tempName), .uint32(0)]
+            typedArguments: DBusArguments(tempName, UInt32(0))
         )
 
         let received = await withTaskGroup(of: Bool.self) { group in
@@ -85,14 +82,14 @@ final class ProxyTests: XCTestCase {
         guard received else {
             let _: UInt32? = try? proxy.callExpectingSingle(
                 "ReleaseName",
-                arguments: [.string(tempName)]
+                typedArguments: DBusArguments(tempName)
             )
             throw XCTSkip("NameOwnerChanged signal not observed via proxy within timeout")
         }
 
         let _: UInt32 = try proxy.callExpectingSingle(
             "ReleaseName",
-            arguments: [.string(tempName)]
+            typedArguments: DBusArguments(tempName)
         )
     }
 

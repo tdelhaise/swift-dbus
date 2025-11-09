@@ -51,6 +51,18 @@ public struct DBusProxy: Sendable {
         }
     }
 
+    /// Appel avec encodeur typed (ex: `DBusArguments("foo", UInt32(0))`).
+    @discardableResult
+    public func call<Args: DBusArgumentEncodable>(
+        _ method: String,
+        typedArguments arguments: Args,
+        timeoutMS: Int32 = 2000
+    ) throws -> DBusMessageRef {
+        var encoder = DBusArgumentEncoder()
+        try arguments.encodeArguments(into: &encoder)
+        return try call(method, arguments: encoder.values, timeoutMS: timeoutMS)
+    }
+
     /// Appel standard retournant le **premier String** du reply.
     public func callExpectingFirstString(
         _ method: String,
@@ -61,6 +73,15 @@ public struct DBusProxy: Sendable {
         return try DBusMarshal.firstString(reply)
     }
 
+    public func callExpectingFirstString<Args: DBusArgumentEncodable>(
+        _ method: String,
+        typedArguments arguments: Args,
+        timeoutMS: Int32 = 2000
+    ) throws -> String {
+        let reply = try call(method, typedArguments: arguments, timeoutMS: timeoutMS)
+        return try DBusMarshal.firstString(reply)
+    }
+
     /// Retourne tous les arguments décodés comme valeurs basiques.
     public func callExpectingBasics(
         _ method: String,
@@ -68,6 +89,15 @@ public struct DBusProxy: Sendable {
         timeoutMS: Int32 = 2000
     ) throws -> [DBusBasicValue] {
         let reply = try call(method, arguments: arguments, timeoutMS: timeoutMS)
+        return DBusMarshal.decodeAllBasicArgs(reply)
+    }
+
+    public func callExpectingBasics<Args: DBusArgumentEncodable>(
+        _ method: String,
+        typedArguments arguments: Args,
+        timeoutMS: Int32 = 2000
+    ) throws -> [DBusBasicValue] {
+        let reply = try call(method, typedArguments: arguments, timeoutMS: timeoutMS)
         return DBusMarshal.decodeAllBasicArgs(reply)
     }
 
@@ -90,6 +120,20 @@ public struct DBusProxy: Sendable {
         timeoutMS: Int32 = 2000
     ) throws -> T {
         let basics = try callExpectingBasics(method, arguments: arguments, timeoutMS: timeoutMS)
+        var decoder = DBusDecoder(values: basics)
+        let value: T = try decoder.next()
+        if !decoder.isAtEnd {
+            throw DBusDecodeError.missingValue(expected: "end of values")
+        }
+        return value
+    }
+
+    public func callExpectingSingle<T: DBusBasicDecodable, Args: DBusArgumentEncodable>(
+        _ method: String,
+        typedArguments arguments: Args,
+        timeoutMS: Int32 = 2000
+    ) throws -> T {
+        let basics = try callExpectingBasics(method, typedArguments: arguments, timeoutMS: timeoutMS)
         var decoder = DBusDecoder(values: basics)
         let value: T = try decoder.next()
         if !decoder.isAtEnd {

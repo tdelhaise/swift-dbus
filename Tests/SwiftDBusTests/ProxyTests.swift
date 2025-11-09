@@ -108,4 +108,20 @@ final class ProxyTests: XCTestCase {
         let properties = try proxy.getAllProperties()
         XCTAssertNotNil(properties["Features"], "GetAll should expose Features entry")
     }
+
+    func testProxyCallExpectingTypedStruct() throws {
+        let connection = try DBusConnection(bus: .session)
+        let proxy = makeBusProxy(connection)
+
+        let result = try proxy.callExpecting("ListNames", as: ListNamesResponse.self)
+        XCTAssertFalse(result.names.isEmpty)
+    }
+}
+
+private struct ListNamesResponse: DBusReturnDecodable {
+    let names: [String]
+
+    init(from decoder: inout DBusDecoder) throws {
+        self.names = try decoder.next([String].self)
+    }
 }

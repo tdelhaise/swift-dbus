@@ -113,19 +113,53 @@ public struct DBusProxy: Sendable {
         return try decode(&decoder)
     }
 
+    /// Appel et décodage via un type conforme à `DBusReturnDecodable`.
+    public func callExpecting<T: DBusReturnDecodable>(
+        _ method: String,
+        arguments: [DBusBasicValue] = [],
+        timeoutMS: Int32 = 2000,
+        as type: T.Type = T.self
+    ) throws -> T {
+        let basics = try callExpectingBasics(method, arguments: arguments, timeoutMS: timeoutMS)
+        var decoder = DBusDecoder(values: basics)
+        let value = try type.init(from: &decoder)
+        if !decoder.isAtEnd {
+            throw DBusDecodeError.missingValue(expected: "end of values")
+        }
+        return value
+    }
+
+    public func callExpecting<T: DBusReturnDecodable, Args: DBusArgumentEncodable>(
+        _ method: String,
+        typedArguments arguments: Args,
+        timeoutMS: Int32 = 2000,
+        as type: T.Type = T.self
+    ) throws -> T {
+        let basics = try callExpectingBasics(
+            method,
+            typedArguments: arguments,
+            timeoutMS: timeoutMS
+        )
+        var decoder = DBusDecoder(values: basics)
+        let value = try type.init(from: &decoder)
+        if !decoder.isAtEnd {
+            throw DBusDecodeError.missingValue(expected: "end of values")
+        }
+        return value
+    }
+
     /// Appel attend un unique élément décodable.
     public func callExpectingSingle<T: DBusBasicDecodable>(
         _ method: String,
         arguments: [DBusBasicValue] = [],
         timeoutMS: Int32 = 2000
     ) throws -> T {
-        let basics = try callExpectingBasics(method, arguments: arguments, timeoutMS: timeoutMS)
-        var decoder = DBusDecoder(values: basics)
-        let value: T = try decoder.next()
-        if !decoder.isAtEnd {
-            throw DBusDecodeError.missingValue(expected: "end of values")
-        }
-        return value
+        try callExpecting(
+            method,
+            arguments: arguments,
+            timeoutMS: timeoutMS,
+            as: T.self
+        )
     }
 
     public func callExpectingSingle<T: DBusBasicDecodable, Args: DBusArgumentEncodable>(
@@ -133,13 +167,12 @@ public struct DBusProxy: Sendable {
         typedArguments arguments: Args,
         timeoutMS: Int32 = 2000
     ) throws -> T {
-        let basics = try callExpectingBasics(method, typedArguments: arguments, timeoutMS: timeoutMS)
-        var decoder = DBusDecoder(values: basics)
-        let value: T = try decoder.next()
-        if !decoder.isAtEnd {
-            throw DBusDecodeError.missingValue(expected: "end of values")
-        }
-        return value
+        try callExpecting(
+            method,
+            typedArguments: arguments,
+            timeoutMS: timeoutMS,
+            as: T.self
+        )
     }
 
     /// Stream de signaux limité à cette interface & member (optionnel arg0).

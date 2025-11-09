@@ -78,15 +78,25 @@ let status: UInt32 = try proxy.callExpectingSingle(
     typedArguments: DBusArguments("org.example.App", UInt32(0))
 )
 
-let names: [String] = try proxy.callExpecting(
-    "ListNames",
-    typedArguments: DBusArguments()
-) { decoder in
-    try decoder.next([String].self)
+struct ListNamesResponse: DBusReturnDecodable {
+    let names: [String]
+
+    init(from decoder: inout DBusDecoder) throws {
+        names = try decoder.next([String].self)
+    }
 }
+
+let namesResult: ListNamesResponse = try proxy.callExpecting(
+    "ListNames",
+    as: ListNamesResponse.self
+)
+print("Bus exposes \(namesResult.names.count) names")
 
 // Helper DBusArguments(...) construit la liste d'arguments (ici String + UInt32)
 ```
+
+Pour les méthodes qui renvoient plusieurs valeurs, utilisez les helper `DBusTuple2` / `DBusTuple3` ou faites
+conformer votre propre struct à `DBusReturnDecodable`.
 
 ### Écouter un signal typé
 

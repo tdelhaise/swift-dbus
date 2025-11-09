@@ -91,6 +91,10 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
     }
 }
 
+public protocol DBusReturnDecodable {
+    init(from decoder: inout DBusDecoder) throws
+}
+
 public protocol DBusArgumentEncodable {
     func encodeArguments(into encoder: inout DBusArgumentEncoder) throws
 }
@@ -107,7 +111,7 @@ public protocol DBusBasicEncodable: DBusArgumentEncodable {
     var dbusValue: DBusBasicValue { get }
 }
 
-public protocol DBusBasicDecodable {
+public protocol DBusBasicDecodable: DBusReturnDecodable {
     static func decode(from value: DBusBasicValue) throws -> Self
 }
 
@@ -165,7 +169,7 @@ extension Double: DBusBasicEncodable, DBusBasicDecodable {
     }
 }
 
-extension Array: DBusBasicEncodable, DBusBasicDecodable where Element == String {
+extension Array: DBusBasicEncodable, DBusBasicDecodable, DBusReturnDecodable where Element == String {
     public var dbusValue: DBusBasicValue { .stringArray(self) }
     public static func decode(from value: DBusBasicValue) throws -> [String] {
         guard case .stringArray(let strings) = value else {
@@ -182,6 +186,13 @@ extension DBusBasicValue: DBusBasicEncodable {
 extension DBusBasicValue: DBusBasicDecodable {
     public static func decode(from value: DBusBasicValue) throws -> DBusBasicValue {
         value
+    }
+}
+
+extension DBusBasicDecodable {
+    public init(from decoder: inout DBusDecoder) throws {
+        let value = try decoder.nextValue()
+        self = try Self.decode(from: value)
     }
 }
 
@@ -242,5 +253,49 @@ public struct DBusDecoder {
     public mutating func next<T: DBusBasicDecodable>(_ type: T.Type = T.self) throws -> T {
         let value = try nextValue()
         return try type.decode(from: value)
+    }
+
+    public mutating func decode<T: DBusReturnDecodable>(_ type: T.Type = T.self) throws -> T {
+        try type.init(from: &self)
+    }
+}
+
+public struct DBusTuple2<First, Second>: DBusReturnDecodable, CustomStringConvertible, Sendable
+where First: DBusReturnDecodable & Sendable, Second: DBusReturnDecodable & Sendable {
+    public let first: First
+    public let second: Second
+
+    public init(from decoder: inout DBusDecoder) throws {
+        self.first = try decoder.decode(First.self)
+        self.second = try decoder.decode(Second.self)
+    }
+
+    public var value: (First, Second) { (first, second) }
+
+    public var description: String {
+        "(\(first), \(second))"
+    }
+}
+
+public struct DBusTuple3<First, Second, Third>: DBusReturnDecodable, CustomStringConvertible,
+    Sendable
+where
+    First: DBusReturnDecodable & Sendable,
+    Second: DBusReturnDecodable & Sendable,
+    Third: DBusReturnDecodable & Sendable {
+    public let first: First
+    public let second: Second
+    public let third: Third
+
+    public init(from decoder: inout DBusDecoder) throws {
+        self.first = try decoder.decode(First.self)
+        self.second = try decoder.decode(Second.self)
+        self.third = try decoder.decode(Third.self)
+    }
+
+    public var value: (First, Second, Third) { (first, second, third) }
+
+    public var description: String {
+        "(\(first), \(second), \(third))"
     }
 }

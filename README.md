@@ -137,6 +137,15 @@ for await change in try proxy.signals(member: "NameOwnerChanged", arg0: "org.exa
 let features: [String] = try proxy.getProperty("Features")
 let all = try proxy.getAllProperties()
 print(all["Features"] ?? .unsupported(0))
+
+let cache = DBusPropertyCache()
+let cachedFeatures: [String] = try proxy.getProperty("Features", cache: cache)
+let refreshedFeatures: [String] = try proxy.getProperty(
+    "Features",
+    cache: cache,
+    refreshCache: true
+)
+print("Cached features \(cachedFeatures), live value \(refreshedFeatures)")
 ```
 
 ### Signaux typés via proxy

@@ -116,6 +116,36 @@ final class ProxyTests: XCTestCase {
         let result = try proxy.callExpecting("ListNames", as: ListNamesResponse.self)
         XCTAssertFalse(result.names.isEmpty)
     }
+
+    func testProxyPropertyCacheRoundTrip() throws {
+        let connection = try DBusConnection(bus: .session)
+        let proxy = makeBusProxy(connection)
+        let cache = DBusPropertyCache()
+
+        let key = DBusPropertyKey(
+            destination: proxy.destination,
+            path: proxy.path,
+            interface: proxy.interface,
+            name: "Features"
+        )
+        cache.store(.stringArray(["cached-value"]), for: key)
+
+        let cached: [String] = try proxy.getProperty("Features", cache: cache)
+        XCTAssertEqual(cached, ["cached-value"])
+
+        let refreshed: [String] = try proxy.getProperty(
+            "Features",
+            cache: cache,
+            refreshCache: true
+        )
+        XCTAssertNotEqual(refreshed, ["cached-value"])
+
+        if case .stringArray(let values)? = cache.value(for: key) {
+            XCTAssertEqual(values, refreshed)
+        } else {
+            XCTFail("Cache should contain refreshed value")
+        }
+    }
 }
 
 private struct ListNamesResponse: DBusReturnDecodable {

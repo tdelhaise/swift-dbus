@@ -1,4 +1,54 @@
 import CDbus
+import Foundation
+
+public struct DBusPropertyKey: Hashable, Sendable {
+    public let destination: String
+    public let path: String
+    public let interface: String
+    public let name: String
+
+    public init(destination: String, path: String, interface: String, name: String) {
+        self.destination = destination
+        self.path = path
+        self.interface = interface
+        self.name = name
+    }
+}
+
+public final class DBusPropertyCache: @unchecked Sendable {
+    private var storage: [DBusPropertyKey: DBusBasicValue] = [:]
+    private let lock = NSLock()
+
+    public init() {}
+
+    public func value(for key: DBusPropertyKey) -> DBusBasicValue? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[key]
+    }
+
+    public func store(_ value: DBusBasicValue, for key: DBusPropertyKey) {
+        lock.lock()
+        storage[key] = value
+        lock.unlock()
+    }
+
+    public func removeValue(for key: DBusPropertyKey) {
+        lock.lock()
+        storage.removeValue(forKey: key)
+        lock.unlock()
+    }
+
+    public func removeAll(where shouldRemove: ((DBusPropertyKey) -> Bool)? = nil) {
+        lock.lock()
+        if let predicate = shouldRemove {
+            storage = storage.filter { !predicate($0.key) }
+        } else {
+            storage.removeAll()
+        }
+        lock.unlock()
+    }
+}
 
 /// Point d’entrée haut niveau pour consommer une interface DBus donnée (M4).
 public struct DBusProxy: Sendable {
@@ -230,12 +280,20 @@ public struct DBusProxy: Sendable {
         return try DBusMarshal.firstVariantBasic(reply)
     }
 
-    public func getProperty<T: DBusBasicDecodable>(
+    public func getProperty<T: DBusPropertyConvertible>(
         _ property: String,
         as type: T.Type = T.self,
-        timeoutMS: Int32 = 2000
+        timeoutMS: Int32 = 2000,
+        cache: DBusPropertyCache? = nil,
+        refreshCache: Bool = false
     ) throws -> T {
+        let cacheKey = makePropertyKey(property)
+        if let cache, !refreshCache, let cached = cache.value(for: cacheKey) {
+            return try type.decode(from: cached)
+        }
+
         let value = try getProperty(property, timeoutMS: timeoutMS)
+        cache?.store(value, for: cacheKey)
         return try type.decode(from: value)
     }
 
@@ -251,21 +309,50 @@ public struct DBusProxy: Sendable {
         }
     }
 
-    public func setProperty<T: DBusBasicEncodable>(
+    public func setProperty<T: DBusPropertyConvertible>(
         _ property: String,
         value: T,
-        timeoutMS: Int32 = 2000
+        timeoutMS: Int32 = 2000,
+        cache: DBusPropertyCache? = nil
     ) throws {
         try setProperty(property, value: value.dbusValue, timeoutMS: timeoutMS)
+        cache?.store(value.dbusValue, for: makePropertyKey(property))
     }
 
-    public func getAllProperties(timeoutMS: Int32 = 2000) throws -> [String: DBusBasicValue] {
+    public func getAllProperties(
+        timeoutMS: Int32 = 2000,
+        cache: DBusPropertyCache? = nil
+    ) throws -> [String: DBusBasicValue] {
         let reply = try propertiesProxy().call(
             "GetAll",
             arguments: [.string(interface)],
             timeoutMS: timeoutMS
         )
-        return try DBusMarshal.firstDictStringVariantBasics(reply)
+        let dict = try DBusMarshal.firstDictStringVariantBasics(reply)
+        if let cache {
+            for (property, value) in dict {
+                cache.store(value, for: makePropertyKey(property))
+            }
+        }
+        return dict
+    }
+
+    public func invalidatePropertyCache(
+        _ property: String? = nil,
+        cache: DBusPropertyCache
+    ) {
+        if let property {
+            cache.removeValue(for: makePropertyKey(property))
+        } else {
+            let destination = destination
+            let path = path
+            let interface = interface
+            cache.removeAll { key in
+                key.destination == destination
+                    && key.path == path
+                    && key.interface == interface
+            }
+        }
     }
 
     private func propertiesProxy() -> DBusProxy {
@@ -274,6 +361,15 @@ public struct DBusProxy: Sendable {
             destination: destination,
             path: path,
             interface: "org.freedesktop.DBus.Properties"
+        )
+    }
+
+    private func makePropertyKey(_ property: String) -> DBusPropertyKey {
+        DBusPropertyKey(
+            destination: destination,
+            path: path,
+            interface: interface,
+            name: property
         )
     }
 }

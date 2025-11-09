@@ -95,6 +95,8 @@ public protocol DBusReturnDecodable {
     init(from decoder: inout DBusDecoder) throws
 }
 
+public protocol DBusPropertyConvertible: DBusBasicEncodable, DBusBasicDecodable {}
+
 public protocol DBusArgumentEncodable {
     func encodeArguments(into encoder: inout DBusArgumentEncoder) throws
 }
@@ -115,7 +117,7 @@ public protocol DBusBasicDecodable: DBusReturnDecodable {
     static func decode(from value: DBusBasicValue) throws -> Self
 }
 
-extension String: DBusBasicEncodable, DBusBasicDecodable {
+extension String: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
     public var dbusValue: DBusBasicValue { .string(self) }
     public static func decode(from value: DBusBasicValue) throws -> String {
         guard case .string(let string) = value else {
@@ -125,7 +127,7 @@ extension String: DBusBasicEncodable, DBusBasicDecodable {
     }
 }
 
-extension Int32: DBusBasicEncodable, DBusBasicDecodable {
+extension Int32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
     public var dbusValue: DBusBasicValue { .int32(self) }
     public static func decode(from value: DBusBasicValue) throws -> Int32 {
         guard case .int32(let intValue) = value else {
@@ -135,7 +137,7 @@ extension Int32: DBusBasicEncodable, DBusBasicDecodable {
     }
 }
 
-extension UInt32: DBusBasicEncodable, DBusBasicDecodable {
+extension UInt32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
     public var dbusValue: DBusBasicValue { .uint32(self) }
     public static func decode(from value: DBusBasicValue) throws -> UInt32 {
         switch value {
@@ -149,7 +151,7 @@ extension UInt32: DBusBasicEncodable, DBusBasicDecodable {
     }
 }
 
-extension Bool: DBusBasicEncodable, DBusBasicDecodable {
+extension Bool: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
     public var dbusValue: DBusBasicValue { .bool(self) }
     public static func decode(from value: DBusBasicValue) throws -> Bool {
         guard case .bool(let boolValue) = value else {
@@ -159,7 +161,7 @@ extension Bool: DBusBasicEncodable, DBusBasicDecodable {
     }
 }
 
-extension Double: DBusBasicEncodable, DBusBasicDecodable {
+extension Double: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
     public var dbusValue: DBusBasicValue { .double(self) }
     public static func decode(from value: DBusBasicValue) throws -> Double {
         guard case .double(let doubleValue) = value else {
@@ -169,7 +171,9 @@ extension Double: DBusBasicEncodable, DBusBasicDecodable {
     }
 }
 
-extension Array: DBusBasicEncodable, DBusBasicDecodable, DBusReturnDecodable where Element == String {
+extension Array: DBusBasicEncodable, DBusBasicDecodable, DBusReturnDecodable,
+    DBusPropertyConvertible
+where Element == String {
     public var dbusValue: DBusBasicValue { .stringArray(self) }
     public static func decode(from value: DBusBasicValue) throws -> [String] {
         guard case .stringArray(let strings) = value else {
@@ -179,7 +183,7 @@ extension Array: DBusBasicEncodable, DBusBasicDecodable, DBusReturnDecodable whe
     }
 }
 
-extension DBusBasicValue: DBusBasicEncodable {
+extension DBusBasicValue: DBusBasicEncodable, DBusPropertyConvertible {
     public var dbusValue: DBusBasicValue { self }
 }
 

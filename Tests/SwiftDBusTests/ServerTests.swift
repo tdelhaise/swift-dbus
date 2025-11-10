@@ -1,3 +1,4 @@
+// swiftlint:disable type_body_length
 import CDbus
 import XCTest
 
@@ -385,6 +386,42 @@ final class ServerTests: XCTestCase {
         XCTAssertTrue(childXML.contains("interface name=\"\(ChildEchoObject.interface)\""))
     }
 
+    func testTypedSignalEmitterDeliversPayload() async throws {
+        let serverConnection = try DBusConnection(bus: .session)
+        let exporter = DBusObjectExporter(connection: serverConnection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.typedsignal")
+        let object = TypedSignalObject()
+        let registration = try exporter.register(object, busName: tempName)
+        defer { registration.cancel() }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let clientConnection = try DBusConnection(bus: .session)
+        let proxy = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: TypedSignalObject.path,
+            interface: TypedSignalObject.interface
+        )
+        let stream = try proxy.signals(TypedPingSignal.self)
+        let signalTask = Task {
+            try await withTimeout(seconds: 10) {
+                for await signal in stream {
+                    return signal.payload
+                }
+                throw TestTimeoutError()
+            }
+        }
+
+        let reply: String = try proxy.callExpectingSingle(
+            "EmitTyped",
+            arguments: [.string("bongo")]
+        )
+        let received = try await signalTask.value
+        XCTAssertEqual(reply, "bongo")
+        XCTAssertEqual("bongo", received)
+    }
+
     func testCustomIntrospectionRespectedForSingleObject() async throws {
         let serverConnection = try DBusConnection(bus: .session)
         let exporter = DBusObjectExporter(connection: serverConnection)
@@ -439,9 +476,9 @@ final class ServerTests: XCTestCase {
     }
 }
 
-private struct TestTimeoutError: Error {}
+struct TestTimeoutError: Error {}
 
-private func withTimeout<T: Sendable>(
+func withTimeout<T: Sendable>(
     seconds: TimeInterval,
     operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
@@ -458,3 +495,5 @@ private func withTimeout<T: Sendable>(
         return result
     }
 }
+
+// swiftlint:enable type_body_length

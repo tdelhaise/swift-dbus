@@ -27,7 +27,7 @@ jobs:
         run: swift build -v
 
       - name: Test (session bus)
-        run: bash scripts/test.sh -v
+        run: timeout 60s bash scripts/test.sh -v
 
   noble:
     runs-on: ubuntu-22.04
@@ -48,4 +48,4 @@ jobs:
         run: swift build -v
 
       - name: Test (session bus)
-        run: bash scripts/test.sh -v
+        run: timeout 60s bash scripts/test.sh -v

@@ -176,6 +176,11 @@ for await signal in typedStream {
 }
 ```
 
+This example uses the typed signal payload directly on the server: a `DBusSignalEmitter`
+can now call `emit(_:payload:)` with a `%DBusSignalEncodable` struct, and the proxy
+shares underlying match rules so multiple subscribers reuse the same stream (signal caches
+avoid re-registering filters).
+
 ### Exporter un objet DBus (M5 – WIP)
 
 ```swift

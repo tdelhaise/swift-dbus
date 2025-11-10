@@ -418,6 +418,15 @@ public struct DBusSignalEmitter: Sendable {
         try emit(signal, values: encoder.values)
     }
 
+    public func emit<T: DBusSignalEncodable>(
+        _ signal: DBusSignalDescription,
+        payload: T
+    ) throws {
+        var encoder = DBusSignalArgumentsEncoder()
+        try payload.encodeSignal(into: &encoder)
+        try emit(signal, values: encoder.values)
+    }
+
     public func emitPropertiesChanged(
         interface changedInterface: String,
         changed: [String: DBusBasicValue],

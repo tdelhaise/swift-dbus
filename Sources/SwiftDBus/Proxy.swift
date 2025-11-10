@@ -398,6 +398,7 @@ public struct DBusProxy: Sendable {
     public let path: String
     public let interface: String
     public let caches: DBusProxyCaches
+    private let signalCacheHolder = SignalCacheHolder()
 
     public init(
         connection: DBusConnection,
@@ -574,13 +575,10 @@ public struct DBusProxy: Sendable {
         member: String,
         arg0: String? = nil
     ) throws -> AsyncStream<DBusSignal> {
-        let rule = DBusMatchRule.signal(
-            path: path,
-            interface: interface,
+        try cachedSignalStream(
             member: member,
             arg0: arg0
         )
-        return try connection.signals(matching: rule)
     }
 
     /// Variante typée de `signals` : décode chaque signal via closure.
@@ -1116,6 +1114,38 @@ extension DBusProxy {
         }
         return try signals(T.self, arg0: overrideArg0 ?? T.arg0)
     }
+
+    private func cachedSignalStream(
+        member: String,
+        arg0: String?
+    ) throws -> AsyncStream<DBusSignal> {
+        try cachedSignalStream(rule: signalMatchRule(member: member, arg0: arg0))
+    }
+
+    private func cachedSignalStream(
+        rule: DBusMatchRule
+    ) throws -> AsyncStream<DBusSignal> {
+        if let existing = signalCacheHolder.cache(for: rule) {
+            return existing.stream()
+        }
+        let cache = try SignalStreamCache(
+            rule: rule,
+            connection: connection
+        ) { [weak signalCacheHolder] in
+            signalCacheHolder?.removeCache(for: rule)
+        }
+        signalCacheHolder.store(cache, for: rule)
+        return cache.stream()
+    }
+
+    private func signalMatchRule(member: String, arg0: String?) -> DBusMatchRule {
+        DBusMatchRule.signal(
+            path: path,
+            interface: interface,
+            member: member,
+            arg0: arg0
+        )
+    }
 }
 
 extension DBusProxy.MethodHandle {
@@ -1127,6 +1157,107 @@ extension DBusProxy.MethodHandle {
                 actual: actual
             )
         }
+    }
+}
+
+private final class SignalStreamCache: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [Int: AsyncStream<DBusSignal>.Continuation] = [:]
+    private var nextID = 0
+    private var isFinalized = false
+    private let cleanup: @Sendable () -> Void
+    private var task: Task<Void, Never>?
+
+    init(
+        rule: DBusMatchRule,
+        connection: DBusConnection,
+        cleanup: @escaping @Sendable () -> Void
+    ) throws {
+        self.cleanup = cleanup
+        let stream = try connection.signals(matching: rule)
+        task = Task.detached { [weak self] in
+            guard let self else { return }
+            for await signal in stream {
+                self.broadcast(signal)
+            }
+            self.finalize()
+        }
+    }
+
+    func stream() -> AsyncStream<DBusSignal> {
+        AsyncStream { continuation in
+            lock.lock()
+            let id = nextID
+            nextID += 1
+            continuations[id] = continuation
+            lock.unlock()
+            continuation.onTermination = { [weak self] _ in
+                self?.removeContinuation(id)
+            }
+        }
+    }
+
+    private func broadcast(_ signal: DBusSignal) {
+        lock.lock()
+        let continuationsCopy = Array(continuations.values)
+        lock.unlock()
+        for continuation in continuationsCopy {
+            continuation.yield(signal)
+        }
+    }
+
+    private func removeContinuation(_ id: Int) {
+        lock.lock()
+        continuations.removeValue(forKey: id)
+        let isEmpty = continuations.isEmpty
+        lock.unlock()
+        if isEmpty {
+            cancel()
+        }
+    }
+
+    private func cancel() {
+        task?.cancel()
+        finalize()
+    }
+
+    private func finalize() {
+        lock.lock()
+        guard !isFinalized else {
+            lock.unlock()
+            return
+        }
+        isFinalized = true
+        let continuationsCopy = Array(continuations.values)
+        continuations.removeAll()
+        lock.unlock()
+        cleanup()
+        for continuation in continuationsCopy {
+            continuation.finish()
+        }
+    }
+}
+
+private final class SignalCacheHolder: @unchecked Sendable {
+    private var storage: [DBusMatchRule: SignalStreamCache] = [:]
+    private let lock = NSLock()
+
+    func cache(for rule: DBusMatchRule) -> SignalStreamCache? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[rule]
+    }
+
+    func store(_ cache: SignalStreamCache, for rule: DBusMatchRule) {
+        lock.lock()
+        storage[rule] = cache
+        lock.unlock()
+    }
+
+    func removeCache(for rule: DBusMatchRule) {
+        lock.lock()
+        storage.removeValue(forKey: rule)
+        lock.unlock()
     }
 }
 

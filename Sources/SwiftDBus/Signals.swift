@@ -13,7 +13,7 @@ import Foundation
 ///   arg0: "org.example.App"
 /// )
 /// ```
-public struct DBusMatchRule: Equatable, CustomStringConvertible, Sendable {
+public struct DBusMatchRule: Equatable, Hashable, CustomStringConvertible, Sendable {
     public var type: String = "signal"
     public var sender: String?
     public var path: String?
@@ -110,6 +110,16 @@ extension DBusSignalPayload {
         }
         decoder = payloadDecoder
         self = value
+    }
+}
+
+public protocol DBusSignalEncodable: Sendable {
+    func encodeSignal(into encoder: inout DBusSignalArgumentsEncoder) throws
+}
+
+extension DBusSignalArgumentsEncoder {
+    public mutating func encode<T: DBusSignalEncodable>(_ value: T) throws {
+        try value.encodeSignal(into: &self)
     }
 }
 

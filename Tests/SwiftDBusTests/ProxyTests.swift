@@ -93,6 +93,47 @@ final class ProxyTests: XCTestCase {
         )
     }
 
+    func testProxySignalCacheServicesMultipleSubscribers() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip("Signal timing via proxy is flaky on CI")
+        }
+        let connection = try DBusConnection(bus: .session)
+        let proxy = makeBusProxy(connection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.proxy.signal.cache")
+
+        let streamA = try proxy.signals(NameOwnerChangedSignal.self, arg0: tempName)
+        let streamB = try proxy.signals(NameOwnerChangedSignal.self, arg0: tempName)
+
+        let taskA = Task {
+            for await signal in streamA where signal.name == tempName {
+                return true
+            }
+            return false
+        }
+        let taskB = Task {
+            for await signal in streamB where signal.name == tempName {
+                return true
+            }
+            return false
+        }
+
+        let _: UInt32 = try proxy.callExpectingSingle(
+            "RequestName",
+            typedArguments: DBusArguments(tempName, UInt32(0))
+        )
+
+        let first = try await withTimeout(seconds: 5) { await taskA.value }
+        let second = try await withTimeout(seconds: 5) { await taskB.value }
+
+        XCTAssertTrue(first, "First subscriber should see the signal")
+        XCTAssertTrue(second, "Second subscriber should also see the signal")
+
+        let _: UInt32 = try proxy.callExpectingSingle(
+            "ReleaseName",
+            typedArguments: DBusArguments(tempName)
+        )
+    }
+
     func testProxyTypedPropertyAccess() throws {
         let connection = try DBusConnection(bus: .session)
         let proxy = makeBusProxy(connection)

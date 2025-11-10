@@ -185,6 +185,53 @@ final class CustomIntrospectionObject: DBusObject, @unchecked Sendable {
     var introspectionXML: String? { Self.customXML }
 }
 
+struct TypedPingSignal: DBusSignalPayload, DBusSignalEncodable {
+    static let member = "TypedPing"
+
+    let payload: String
+
+    init(signal: DBusSignal, decoder: inout DBusDecoder) throws {
+        self.payload = try decoder.next()
+    }
+
+    init(from decoder: inout DBusDecoder) throws {
+        self.payload = try decoder.next()
+    }
+
+    init(payload: String) {
+        self.payload = payload
+    }
+
+    func encodeSignal(into encoder: inout DBusSignalArgumentsEncoder) throws {
+        encoder.encode(payload)
+    }
+}
+
+final class TypedSignalObject: DBusObject, @unchecked Sendable {
+    static let interface = "org.swiftdbus.tests.TypedSignal"
+    static let path = "/org/swiftdbus/tests/TypedSignal"
+    static let typedSignal = DBusSignalDescription(
+        name: TypedPingSignal.member,
+        arguments: [.field("payload", signature: "s")]
+    )
+
+    var methods: [DBusMethod] {
+        [
+            .returning(
+                "EmitTyped",
+                arguments: [.input("payload", signature: "s")],
+                returns: [.output("echo", signature: "s")]
+            ) { call, decoder in
+                let payload: String = try decoder.next()
+                try call.signalEmitter.emit(Self.typedSignal, payload: TypedPingSignal(payload: payload))
+                return payload
+            }
+        ]
+    }
+
+    var signals: [DBusSignalDescription] { [Self.typedSignal] }
+}
+
 final class WriteOnlyPropertyObject: DBusObject, @unchecked Sendable {
     static let interface = "org.swiftdbus.tests.WriteOnly"
     static let path = "/org/swiftdbus/tests/WriteOnly"

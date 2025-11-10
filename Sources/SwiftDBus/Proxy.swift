@@ -97,7 +97,22 @@ private final class DBusIntrospectionXMLParser: NSObject, XMLParserDelegate {
     }
 
     func parse(xml: String) throws -> DBusIntrospectedInterface? {
-        guard let data = xml.data(using: .utf8) else {
+        let trimmed = xml.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let startRange = trimmed.range(of: "<interface name=\"\(targetInterface)\"") else {
+            return nil
+        }
+        guard let endRange = trimmed.range(of: "</interface>", range: startRange.lowerBound..<trimmed.endIndex) else {
+            return nil
+        }
+        let interfaceFragment = trimmed[startRange.lowerBound..<endRange.upperBound]
+        let snippet = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <root>
+            \(interfaceFragment)
+            </root>
+            """
+
+        guard let data = snippet.data(using: .utf8) else {
             throw DBusConnection.Error.failed("Invalid introspection XML encoding")
         }
         let parser = XMLParser(data: data)
@@ -122,11 +137,6 @@ private final class DBusIntrospectionXMLParser: NSObject, XMLParserDelegate {
         switch elementName {
         case "interface":
             currentInterface = attributeDict["name"]
-            if currentInterface == targetInterface {
-                methods.removeAll()
-                signals.removeAll()
-                properties.removeAll()
-            }
         case "method":
             guard currentInterface == targetInterface else { return }
             currentMethod = MethodBuilder(name: attributeDict["name"] ?? "")

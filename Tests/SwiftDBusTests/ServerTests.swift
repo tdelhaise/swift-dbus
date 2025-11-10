@@ -194,14 +194,20 @@ final class ServerTests: XCTestCase {
         try await Task.sleep(nanoseconds: 100_000_000)
 
         let clientConnection = try DBusConnection(bus: .session)
-        let proxy = DBusProxy(
+        let metadataProxy = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: MetadataObject.path,
+            interface: MetadataObject.interface
+        )
+        let introspectionProxy = DBusProxy(
             connection: clientConnection,
             destination: tempName,
             path: MetadataObject.path,
             interface: "org.freedesktop.DBus.Introspectable"
         )
 
-        let xml: String = try proxy.callExpectingSingle("Introspect")
+        let xml: String = try introspectionProxy.callExpectingSingle("Introspect")
         XCTAssertTrue(
             xml.contains("<method name=\"Describe\""),
             "Introspection should list Describe method"
@@ -223,7 +229,7 @@ final class ServerTests: XCTestCase {
             "Signals should be reflected in introspection"
         )
 
-        let interfaceInfo = try proxy.introspectedInterface()
+        let interfaceInfo = try metadataProxy.introspectedInterface()
         XCTAssertEqual(interfaceInfo?.methods.first?.name, "Describe")
         XCTAssertEqual(interfaceInfo?.signals.first?.name, "Updated")
         XCTAssertEqual(interfaceInfo?.properties.first?.name, "Mode")

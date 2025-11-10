@@ -255,6 +255,53 @@ public final class DBusPropertyCache: @unchecked Sendable {
     }
 }
 
+public struct DBusIntrospectionKey: Hashable, Sendable {
+    public let destination: String
+    public let path: String
+    public let interface: String
+
+    public init(destination: String, path: String, interface: String) {
+        self.destination = destination
+        self.path = path
+        self.interface = interface
+    }
+}
+
+public final class DBusIntrospectionCache: @unchecked Sendable {
+    private var storage: [DBusIntrospectionKey: DBusIntrospectedInterface] = [:]
+    private let lock = NSLock()
+
+    public init() {}
+
+    public func value(for key: DBusIntrospectionKey) -> DBusIntrospectedInterface? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[key]
+    }
+
+    public func store(_ value: DBusIntrospectedInterface, for key: DBusIntrospectionKey) {
+        lock.lock()
+        storage[key] = value
+        lock.unlock()
+    }
+
+    public func removeValue(for key: DBusIntrospectionKey) {
+        lock.lock()
+        storage.removeValue(forKey: key)
+        lock.unlock()
+    }
+
+    public func removeAll(where shouldRemove: ((DBusIntrospectionKey) -> Bool)? = nil) {
+        lock.lock()
+        if let predicate = shouldRemove {
+            storage = storage.filter { !predicate($0.key) }
+        } else {
+            storage.removeAll()
+        }
+        lock.unlock()
+    }
+}
+
 public final class DBusPropertyCacheSubscription: Sendable {
     private let task: Task<Void, Never>
 
@@ -692,11 +739,19 @@ public struct DBusProxy: Sendable {
     }
 
     public func introspectedInterface(
-        timeoutMS: Int32 = 2000
+        timeoutMS: Int32 = 2000,
+        cache: DBusIntrospectionCache? = nil
     ) throws -> DBusIntrospectedInterface? {
+        let key = makeIntrospectionKey()
+        if let cache, let cached = cache.value(for: key) {
+            return cached
+        }
+
         let xml = try introspectionXML(timeoutMS: timeoutMS)
         let parser = DBusIntrospectionXMLParser(targetInterface: interface)
-        return try parser.parse(xml: xml)
+        guard let parsed = try parser.parse(xml: xml) else { return nil }
+        cache?.store(parsed, for: key)
+        return parsed
     }
 
     private func propertiesProxy() -> DBusProxy {
@@ -714,6 +769,14 @@ public struct DBusProxy: Sendable {
             path: path,
             interface: interface,
             name: property
+        )
+    }
+
+    private func makeIntrospectionKey() -> DBusIntrospectionKey {
+        DBusIntrospectionKey(
+            destination: destination,
+            path: path,
+            interface: interface
         )
     }
 }

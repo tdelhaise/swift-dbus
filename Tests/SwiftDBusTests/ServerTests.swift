@@ -256,6 +256,37 @@ final class ServerTests: XCTestCase {
             XCTAssertEqual(got, 0)
         }
     }
+
+    func testIntrospectionCacheReturnsStaleMetadataAfterUnregister() async throws {
+        let serverConnection = try DBusConnection(bus: .session)
+        let exporter = DBusObjectExporter(connection: serverConnection)
+        let object = MetadataObject()
+        try exporter.register(object)
+
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.metadata.cache")
+        _ = try serverConnection.requestName(tempName)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let clientConnection = try DBusConnection(bus: .session)
+        let metadataProxy = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: MetadataObject.path,
+            interface: MetadataObject.interface
+        )
+        let cache = DBusIntrospectionCache()
+
+        let cachedInterface = try metadataProxy.introspectedInterface(cache: cache)
+        XCTAssertEqual(cachedInterface?.methods.first?.name, "Describe")
+
+        exporter.unregister(path: MetadataObject.path, interface: MetadataObject.interface)
+        _ = try serverConnection.releaseName(tempName)
+
+        XCTAssertThrowsError(try metadataProxy.introspectedInterface(timeoutMS: 100))
+
+        let replay = try metadataProxy.introspectedInterface(cache: cache)
+        XCTAssertEqual(replay?.methods.first?.name, "Describe")
+    }
 }
 
 private struct TestTimeoutError: Error {}

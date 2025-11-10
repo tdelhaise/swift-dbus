@@ -1,3 +1,4 @@
+import CDbus
 import XCTest
 
 @testable import SwiftDBus
@@ -8,10 +9,10 @@ final class ServerTests: XCTestCase {
         let serverConnection = try DBusConnection(bus: .session)
         let exporter = DBusObjectExporter(connection: serverConnection)
         let object = EchoObject()
-        try exporter.register(object)
-
         let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.echo")
-        _ = try serverConnection.requestName(tempName)
+        let registration = try exporter.register(object, busName: tempName)
+        defer { registration.cancel() }
+
         try await Task.sleep(nanoseconds: 100_000_000)
 
         let clientConnection = try DBusConnection(bus: .session)
@@ -41,8 +42,6 @@ final class ServerTests: XCTestCase {
         )
         let xml: String = try introspectionProxy.callExpectingSingle("Introspect")
         XCTAssertTrue(xml.contains("Echo"), "Introspection should mention Echo method")
-
-        _ = try serverConnection.releaseName(tempName)
     }
 
     func testExportedMethodEmitsSignal() async throws {
@@ -53,10 +52,10 @@ final class ServerTests: XCTestCase {
         let serverConnection = try DBusConnection(bus: .session)
         let exporter = DBusObjectExporter(connection: serverConnection)
         let object = EchoObject()
-        try exporter.register(object)
-
         let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.signal")
-        _ = try serverConnection.requestName(tempName)
+        let registration = try exporter.register(object, busName: tempName)
+        defer { registration.cancel() }
+
         try await Task.sleep(nanoseconds: 100_000_000)
         let clientConnection = try DBusConnection(bus: .session)
 
@@ -91,18 +90,16 @@ final class ServerTests: XCTestCase {
 
         XCTAssertTrue(received, "Expected signal to be observed")
         XCTAssertEqual(object.recordedSendCount(), 1)
-
-        _ = try serverConnection.releaseName(tempName)
     }
 
     func testExportedPropertiesRespond() async throws {
         let serverConnection = try DBusConnection(bus: .session)
         let exporter = DBusObjectExporter(connection: serverConnection)
         let object = PropertyObject()
-        try exporter.register(object)
-
         let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.properties")
-        _ = try serverConnection.requestName(tempName)
+        let registration = try exporter.register(object, busName: tempName)
+        defer { registration.cancel() }
+
         try await Task.sleep(nanoseconds: 100_000_000)
 
         let clientConnection = try DBusConnection(bus: .session)
@@ -179,18 +176,16 @@ final class ServerTests: XCTestCase {
             xml.contains("property name=\"Name\""),
             "Generated introspection should list properties"
         )
-
-        _ = try serverConnection.releaseName(tempName)
     }
 
     func testAutoIntrospectionIncludesMetadata() async throws {
         let serverConnection = try DBusConnection(bus: .session)
         let exporter = DBusObjectExporter(connection: serverConnection)
         let object = MetadataObject()
-        try exporter.register(object)
-
         let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.metadata")
-        _ = try serverConnection.requestName(tempName)
+        let registration = try exporter.register(object, busName: tempName)
+        defer { registration.cancel() }
+
         try await Task.sleep(nanoseconds: 100_000_000)
 
         let clientConnection = try DBusConnection(bus: .session)
@@ -233,8 +228,6 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(interfaceInfo?.methods.first?.name, "Describe")
         XCTAssertEqual(interfaceInfo?.signals.first?.name, "Updated")
         XCTAssertEqual(interfaceInfo?.properties.first?.name, "Mode")
-
-        _ = try serverConnection.releaseName(tempName)
     }
 
     func testSignalHelperValidatesPayloadCount() throws {
@@ -257,11 +250,130 @@ final class ServerTests: XCTestCase {
         }
     }
 
+    func testRegistrationManagesBusNameLifecycle() async throws {
+        let serverConnection = try DBusConnection(bus: .session)
+        let exporter = DBusObjectExporter(connection: serverConnection)
+        let object = EchoObject()
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.busname")
+
+        let registration = try exporter.register(
+            object,
+            busName: tempName,
+            requestNameFlags: UInt32(DBUS_NAME_FLAG_DO_NOT_QUEUE)
+        )
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let competingConnection = try DBusConnection(bus: .session)
+        let firstAttempt = try competingConnection.requestName(
+            tempName,
+            flags: UInt32(DBUS_NAME_FLAG_DO_NOT_QUEUE)
+        )
+        XCTAssertEqual(firstAttempt, DBUS_REQUEST_NAME_REPLY_EXISTS)
+
+        registration.cancel()
+
+        let secondAttempt = try competingConnection.requestName(
+            tempName,
+            flags: UInt32(DBUS_NAME_FLAG_DO_NOT_QUEUE)
+        )
+        XCTAssertEqual(secondAttempt, DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER)
+        _ = try competingConnection.releaseName(tempName)
+    }
+
+    func testIntrospectionListsMultipleInterfaces() async throws {
+        let serverConnection = try DBusConnection(bus: .session)
+        let exporter = DBusObjectExporter(connection: serverConnection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.multiInterface")
+
+        let primary = EchoObject()
+        let secondary = AuxiliaryInterfaceObject()
+
+        let primaryRegistration = try exporter.register(primary, busName: tempName)
+        let secondaryRegistration = try exporter.register(secondary)
+        defer {
+            secondaryRegistration.cancel()
+            primaryRegistration.cancel()
+        }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let clientConnection = try DBusConnection(bus: .session)
+        let introspectionProxy = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: EchoObject.path,
+            interface: "org.freedesktop.DBus.Introspectable"
+        )
+        let xml: String = try introspectionProxy.callExpectingSingle("Introspect")
+        XCTAssertTrue(xml.contains("interface name=\"\(EchoObject.interface)\""))
+        XCTAssertTrue(xml.contains("interface name=\"\(AuxiliaryInterfaceObject.interface)\""))
+    }
+
+    func testIntrospectionListsChildNodes() async throws {
+        let serverConnection = try DBusConnection(bus: .session)
+        let exporter = DBusObjectExporter(connection: serverConnection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.children")
+
+        let parent = EchoObject()
+        let child = ChildEchoObject()
+        let parentRegistration = try exporter.register(parent, busName: tempName)
+        let childRegistration = try exporter.register(child)
+        defer {
+            childRegistration.cancel()
+            parentRegistration.cancel()
+        }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let clientConnection = try DBusConnection(bus: .session)
+        let parentIntrospect = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: EchoObject.path,
+            interface: "org.freedesktop.DBus.Introspectable"
+        )
+        let parentXML: String = try parentIntrospect.callExpectingSingle("Introspect")
+        XCTAssertTrue(parentXML.contains("<node name=\"Child\"/>"))
+
+        let childIntrospect = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: ChildEchoObject.path,
+            interface: "org.freedesktop.DBus.Introspectable"
+        )
+        let childXML: String = try childIntrospect.callExpectingSingle("Introspect")
+        XCTAssertFalse(childXML.contains("<node name=\""))
+        XCTAssertTrue(childXML.contains("interface name=\"\(ChildEchoObject.interface)\""))
+    }
+
+    func testCustomIntrospectionRespectedForSingleObject() async throws {
+        let serverConnection = try DBusConnection(bus: .session)
+        let exporter = DBusObjectExporter(connection: serverConnection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.custom")
+        let customObject = CustomIntrospectionObject()
+        let registration = try exporter.register(customObject, busName: tempName)
+        defer { registration.cancel() }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let clientConnection = try DBusConnection(bus: .session)
+        let introspectionProxy = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: CustomIntrospectionObject.path,
+            interface: "org.freedesktop.DBus.Introspectable"
+        )
+        let xml: String = try introspectionProxy.callExpectingSingle("Introspect")
+        XCTAssertEqual(xml, CustomIntrospectionObject.customXML)
+    }
+
     func testIntrospectionCacheReturnsStaleMetadataAfterUnregister() async throws {
         let serverConnection = try DBusConnection(bus: .session)
         let exporter = DBusObjectExporter(connection: serverConnection)
         let object = MetadataObject()
-        try exporter.register(object)
+        let registration = try exporter.register(object)
+        defer { registration.cancel() }
 
         let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.metadata.cache")
         _ = try serverConnection.requestName(tempName)
@@ -306,168 +418,5 @@ private func withTimeout<T: Sendable>(
         }
         group.cancelAll()
         return result
-    }
-}
-
-private final class EchoObject: DBusObject, @unchecked Sendable {
-    static let interface = "org.swiftdbus.tests.Echo"
-    static let path = "/org/swiftdbus/tests/Echo"
-    static let pingedSignal = DBusSignalDescription(
-        name: "Pinged",
-        arguments: [.field("payload", signature: "s")],
-        documentation: "Echo object emitted signal."
-    )
-
-    var introspectionXML: String? {
-        """
-        <node>
-          <interface name="\(Self.interface)">
-            <method name="Echo">
-              <arg name="message" direction="in" type="s"/>
-              <arg name="message" direction="out" type="s"/>
-            </method>
-            <method name="Send">
-              <arg name="message" direction="in" type="s"/>
-            </method>
-          </interface>
-        </node>
-        """
-    }
-
-    private let lock = NSLock()
-    private var echoCount = 0
-    private var sendCount = 0
-
-    func recordedEchoCount() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return echoCount
-    }
-
-    func recordedSendCount() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return sendCount
-    }
-
-    var methods: [DBusMethod] {
-        [
-            .returning("Echo") { _, decoder in
-                let value: String = try decoder.next()
-                self.incrementEcho()
-                return value
-            },
-            .void("Send") { call, decoder in
-                let payload: String = try decoder.next()
-                try call.signalEmitter.emit(Self.pingedSignal) { encoder in
-                    encoder.encode(payload)
-                }
-                self.incrementSend()
-            }
-        ]
-    }
-
-    var signals: [DBusSignalDescription] { [Self.pingedSignal] }
-
-    private func incrementEcho() {
-        lock.lock()
-        echoCount += 1
-        lock.unlock()
-    }
-
-    private func incrementSend() {
-        lock.lock()
-        sendCount += 1
-        lock.unlock()
-    }
-}
-
-private final class PropertyObject: DBusObject, @unchecked Sendable {
-    static let interface = "org.swiftdbus.tests.Properties"
-    static let path = "/org/swiftdbus/tests/Properties"
-
-    private let lock = NSLock()
-    private var count: Int32 = 0
-    private var name: String = "SwiftDBus"
-
-    var properties: [DBusProperty] {
-        [
-            .readOnly("Name") { _ in
-                self.lock.lock()
-                defer { self.lock.unlock() }
-                return self.name
-            },
-            .readWrite(
-                "Count",
-                get: { _ in
-                    self.lock.lock()
-                    defer { self.lock.unlock() }
-                    return self.count
-                },
-                set: { newValue, invocation in
-                    self.lock.lock()
-                    self.count = newValue
-                    self.lock.unlock()
-                    try invocation.signalEmitter.emitPropertiesChanged(
-                        interface: Self.interface,
-                        changed: ["Count": newValue.dbusValue]
-                    )
-                }
-            )
-        ]
-    }
-}
-
-private final class MetadataObject: DBusObject, @unchecked Sendable {
-    static let interface = "org.swiftdbus.tests.Metadata"
-    static let path = "/org/swiftdbus/tests/Metadata"
-
-    private let lock = NSLock()
-    private var mode: String = "idle"
-
-    var methods: [DBusMethod] {
-        [
-            .returning(
-                "Describe",
-                arguments: [.input("payload", signature: "s")],
-                returns: [.output("echo", signature: "s")],
-                documentation: "Echoes the provided payload."
-            ) { _, decoder in
-                let text: String = try decoder.next()
-                return ">> \(text)"
-            }
-        ]
-    }
-
-    var properties: [DBusProperty] {
-        [
-            .readWrite(
-                "Mode",
-                documentation: "Current operating mode.",
-                get: { _ in
-                    self.lock.lock()
-                    defer { self.lock.unlock() }
-                    return self.mode
-                },
-                set: { newValue, _ in
-                    self.lock.lock()
-                    self.mode = newValue
-                    self.lock.unlock()
-                }
-            )
-        ]
-    }
-
-    var signals: [DBusSignalDescription] {
-        [
-            DBusSignalDescription(
-                name: "Updated",
-                arguments: [
-                    DBusIntrospectionArgument.field("field", signature: "s"),
-                    DBusIntrospectionArgument.field("value", signature: "s")
-                ],
-                documentation: "Emitted whenever a field changes."
-            )
-        ]
     }
 }

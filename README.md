@@ -213,8 +213,13 @@ final class EchoObject: DBusObject {
 
 let connection = try DBusConnection(bus: .session)
 let exporter = DBusObjectExporter(connection: connection)
-try exporter.register(EchoObject())
-try connection.requestName("org.example.Echo")
+let registration = try exporter.register(
+    EchoObject(),
+    busName: "org.example.Echo",
+    requestNameFlags: UInt32(DBUS_NAME_FLAG_DO_NOT_QUEUE)
+)
+// Libère l'objet & le nom de bus automatiquement
+defer { registration.cancel() }
 ```
 
 Les métadonnées (arguments, docstrings, signaux) sont automatiquement traduites en XML
@@ -297,6 +302,10 @@ proxy.invalidateCachedMetadata()
 try proxy.autoInvalidateCachedPropertyCache()
 proxy.invalidateCachedProperties()
 ```
+
+L’exporteur additionne automatiquement toutes les interfaces présentes sur un même `objectPath`
+et expose les sous-nœuds déclarés (`<node name="Child"/>`) via `org.freedesktop.DBus.Introspectable`,
+ce qui simplifie la découverte côté client.
 
 ## CI (Ubuntu)
 

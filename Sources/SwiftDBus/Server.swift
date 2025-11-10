@@ -455,6 +455,43 @@ public struct DBusSignalEmitter: Sendable {
     }
 }
 
+public final class DBusObjectRegistration: @unchecked Sendable {
+    public let path: String
+    public let interface: String
+    public let busName: String?
+
+    private let cancellation: @Sendable () -> Void
+    private let lock = NSLock()
+    private var isCancelled = false
+
+    init(
+        path: String,
+        interface: String,
+        busName: String?,
+        cancellation: @escaping @Sendable () -> Void
+    ) {
+        self.path = path
+        self.interface = interface
+        self.busName = busName
+        self.cancellation = cancellation
+    }
+
+    deinit {
+        cancel()
+    }
+
+    public func cancel() {
+        lock.lock()
+        if isCancelled {
+            lock.unlock()
+            return
+        }
+        isCancelled = true
+        lock.unlock()
+        cancellation()
+    }
+}
+
 // MARK: - Exporter
 
 public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disable:this type_body_length
@@ -488,13 +525,25 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
         listenerTask?.cancel()
     }
 
-    public func register<Object: DBusObject>(_ object: Object) throws {
+    @discardableResult
+    public func register<Object: DBusObject>(
+        _ object: Object,
+        busName: String? = nil,
+        requestNameFlags: UInt32 = 0
+    ) throws -> DBusObjectRegistration {
         let key = ObjectKey(path: Object.path, interface: Object.interface)
-        lock.lock()
-        defer { lock.unlock() }
-        guard objects[key] == nil else {
-            throw DBusServerError.objectAlreadyRegistered(path: key.path, interface: key.interface)
+        let releaseBusName: (@Sendable () -> Void)?
+        if let busName {
+            _ = try connection.requestName(busName, flags: requestNameFlags)
+            let connection = self.connection
+            releaseBusName = { [weak connection] in
+                guard let connection else { return }
+                _ = try? connection.releaseName(busName)
+            }
+        } else {
+            releaseBusName = nil
         }
+
         let emitter = DBusSignalEmitter(connection: connection, path: key.path, interface: key.interface)
         let entry = AnyDBusObject(
             path: key.path,
@@ -507,14 +556,37 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
             propertyList: object.properties,
             signalList: object.signals
         )
+
+        lock.lock()
+        if objects[key] != nil {
+            lock.unlock()
+            releaseBusName?()
+            throw DBusServerError.objectAlreadyRegistered(path: key.path, interface: key.interface)
+        }
         objects[key] = entry
+        lock.unlock()
+
         ensureListener()
+
+        return DBusObjectRegistration(
+            path: key.path,
+            interface: key.interface,
+            busName: busName
+        ) { [weak self] in
+            self?.unregister(path: key.path, interface: key.interface)
+            releaseBusName?()
+        }
     }
 
     public func unregister(path: String, interface: String) {
         lock.lock()
         objects.removeValue(forKey: ObjectKey(path: path, interface: interface))
+        let shouldStop = objects.isEmpty
         lock.unlock()
+        if shouldStop {
+            listenerTask?.cancel()
+            listenerTask = nil
+        }
     }
 
     // swiftlint:disable:next cyclomatic_complexity
@@ -540,9 +612,8 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
                 let member = String(cString: cMember)
                 let sender = dbus_message_get_sender(message.raw).map { String(cString: $0) }
                 if interface == "org.freedesktop.DBus.Introspectable", member == "Introspect" {
-                    guard let entry = object(atPath: path) else { continue }
                     do {
-                        let xml = try introspectionXML(for: entry)
+                        let xml = try introspectionXML(atPath: path)
                         try sendReturn(for: message, values: [.string(xml)])
                     } catch {
                         try? sendFailure(for: message, error: error)
@@ -588,10 +659,12 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
         return objects[ObjectKey(path: path, interface: interface)]
     }
 
-    private func object(atPath path: String) -> AnyDBusObject? {
+    private func objects(atPath path: String) -> [AnyDBusObject] {
         lock.lock()
         defer { lock.unlock() }
-        return objects.first { $0.key.path == path }?.value
+        return objects.compactMap { key, value in
+            key.path == path ? value : nil
+        }
     }
 
     // swiftlint:disable:next cyclomatic_complexity function_body_length
@@ -702,21 +775,52 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
         }
     }
 
-    private func introspectionXML(for entry: AnyDBusObject) throws -> String {
-        if let provided = entry.introspectionXML {
+    private func introspectionXML(atPath path: String) throws -> String {
+        let entries = objects(atPath: path)
+        if entries.count == 1, let provided = entries.first?.introspectionXML {
             return provided
         }
+        let childNodes = childNodeNames(of: path)
+        if entries.isEmpty, childNodes.isEmpty {
+            return "<node/>"
+        }
+        var fragments: [String] = ["<node>"]
+        for entry in entries {
+            fragments.append(interfaceXML(for: entry))
+        }
+        for child in childNodes {
+            fragments.append("  <node name=\"\(child.xmlEscaped())\"/>")
+        }
+        fragments.append("</node>")
+        return fragments.joined(separator: "\n")
+    }
+
+    private func childNodeNames(of path: String) -> [String] {
+        let normalizedCurrent = path == "/" ? "/" : path
+        let prefix = normalizedCurrent == "/" ? "/" : normalizedCurrent + "/"
+        var names = Set<String>()
+        lock.lock()
+        for key in objects.keys {
+            guard key.path.hasPrefix(prefix) else { continue }
+            let remainder = key.path.dropFirst(prefix.count)
+            guard !remainder.isEmpty else { continue }
+            if let next = remainder.split(separator: "/").first {
+                names.insert(String(next))
+            }
+        }
+        lock.unlock()
+        return names.sorted()
+    }
+
+    private func interfaceXML(for entry: AnyDBusObject) -> String {
         let methodsXML = entry.methodList.map { xml(for: $0) }
         let propertiesXML = entry.propertyList.map { xml(for: $0) }
         let signalsXML = entry.signalList.map { xml(for: $0) }
-
         let allLines = methodsXML + signalsXML + propertiesXML
         let body = allLines.isEmpty ? "" : allLines.joined(separator: "\n") + "\n"
         return """
-            <node>
-              <interface name="\(entry.interface)">
+              <interface name="\(entry.interface.xmlEscaped())">
             \(body)  </interface>
-            </node>
             """
     }
 

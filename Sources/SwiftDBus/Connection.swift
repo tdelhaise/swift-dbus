@@ -56,6 +56,7 @@ public final class DBusConnection: @unchecked Sendable {
         source?.cancel()
         source = nil
         if let pointer = raw {
+            dbus_connection_close(pointer)
             dbus_connection_unref(pointer)
         }
         raw = nil
@@ -75,7 +76,7 @@ public final class DBusConnection: @unchecked Sendable {
         if raw != nil { return }
 
         let connectionPointer: OpaquePointer? = try withDBusError { errorPointer in
-            dbus_bus_get(bus.cValue, errorPointer)
+            dbus_bus_get_private(bus.cValue, errorPointer)
         }
 
         guard let connectionPointer else {
@@ -95,6 +96,10 @@ public final class DBusConnection: @unchecked Sendable {
         let readSource = DispatchSource.makeReadSource(fileDescriptor: fd, queue: workQueue)
         readSource.setEventHandler { [weak self] in
             guard let self, let connection = self.raw else { return }
+            self.continuationsLock.lock()
+            let hasContinuations = !self.messageContinuations.isEmpty
+            self.continuationsLock.unlock()
+            guard hasContinuations else { return }
             _ = dbus_connection_read_write(connection, 0)
             self.drainMessages(connection)
         }
@@ -139,8 +144,21 @@ public final class DBusConnection: @unchecked Sendable {
         }
     }
 
+    internal func withRawPointer<T>(_ body: (OpaquePointer) throws -> T) rethrows -> T {
+        try workQueue.sync {
+            guard let connection = raw else {
+                throw Error.failed("connection is nil")
+            }
+            return try body(connection)
+        }
+    }
+
     /// Draine la file DBus et diffuse les messages aux continuations enregistrées.
     private func drainMessages(_ connection: OpaquePointer) {
+        continuationsLock.lock()
+        let hasContinuations = !messageContinuations.isEmpty
+        continuationsLock.unlock()
+        guard hasContinuations else { return }
         while true {
             guard let rawMessage = dbus_connection_pop_message(connection) else { break }
 

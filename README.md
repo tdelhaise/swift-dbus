@@ -146,6 +146,10 @@ let refreshedFeatures: [String] = try proxy.getProperty(
     refreshCache: true
 )
 print("Cached features \(cachedFeatures), live value \(refreshedFeatures)")
+
+let subscription = try proxy.autoInvalidatePropertyCache(cache)
+defer { subscription.cancel() }
+// Toute notification PropertiesChanged videra automatiquement les entrées invalides.
 ```
 
 ### Signaux typés via proxy
@@ -171,6 +175,85 @@ for await signal in typedStream {
     print("\(signal.name) moved from \(signal.oldOwner) -> \(signal.newOwner)")
 }
 ```
+
+### Exporter un objet DBus (M5 – WIP)
+
+```swift
+final class EchoObject: DBusObject {
+    static let interface = "org.example.Echo"
+    static let path = "/org/example/Echo"
+
+    var methods: [DBusMethod] {
+        [
+            .returning(
+                "Echo",
+                arguments: [.input("message", signature: "s")],
+                returns: [.output("echo", signature: "s")],
+                documentation: "Renvoie la chaîne fournie."
+            ) { _, decoder in
+                try decoder.next(String.self)
+            },
+            .returning("Send") { call, decoder in
+                let payload: String = try decoder.next()
+                try call.signalEmitter.emit(member: "Pinged", values: [.string(payload)])
+                return payload
+            }
+        ]
+    }
+
+    var signals: [DBusSignalDescription] {
+        [
+            DBusSignalDescription(
+                name: "Pinged",
+                arguments: [.field("payload", signature: "s")],
+                documentation: "Signale l’envoi d’un message."
+            )
+        ]
+    }
+}
+
+let connection = try DBusConnection(bus: .session)
+let exporter = DBusObjectExporter(connection: connection)
+try exporter.register(EchoObject())
+try connection.requestName("org.example.Echo")
+```
+
+Les métadonnées (arguments, docstrings, signaux) sont automatiquement traduites en XML
+`org.freedesktop.DBus.Introspectable`, pratique pour les outils ou la génération de code.
+
+### Propriétés exportées + `PropertiesChanged`
+
+```swift
+final class SettingsObject: DBusObject {
+    static let interface = "org.example.Settings"
+    static let path = "/org/example/Settings"
+
+    private var count: Int32 = 0
+
+    var properties: [DBusProperty] {
+        [
+            .readOnly("Name") { _ in "SwiftDBus" },
+            .readWrite(
+                "Count",
+                get: { _ in self.count },
+                set: { newValue, invocation in
+                    self.count = newValue
+                    try invocation.signalEmitter.emitPropertiesChanged(
+                        interface: Self.interface,
+                        changed: ["Count": newValue.dbusValue]
+                    )
+                }
+            )
+        ]
+    }
+}
+```
+
+L’exporteur gère automatiquement `org.freedesktop.DBus.Properties` (`Get`, `Set`, `GetAll`) et injecte
+les propriétés dans l’introspection si vous ne fournissez pas de XML personnalisé.
+Utilisez `emitPropertiesChanged` pour prévenir les clients qui mettent en cache leurs valeurs.
+
+Les clients peuvent ensuite appeler `Echo` ou écouter le signal `Pinged` via un `DBusProxy`.
 
 ## CI (Ubuntu)
 

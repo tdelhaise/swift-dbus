@@ -6,8 +6,8 @@ cd "$REPO_ROOT"
 
 if command -v dbus-run-session >/dev/null 2>&1; then
   echo "[swift-dbus] Running tests inside dbus-run-session…" >&2
-  exec dbus-run-session -- swift test "$@"
+  DBUS_VERBOSE=1 DBUS_DEBUG=all exec dbus-run-session -- swift test "$@"
 else
   echo "[swift-dbus] Warning: dbus-run-session introuvable, exécution directe de swift test." >&2
-  exec swift test "$@"
+  DBUS_VERBOSE=1 DBUS_DEBUG=all exec swift test "$@"
 fi

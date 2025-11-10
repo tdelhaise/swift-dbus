@@ -21,6 +21,7 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
     case bool(Bool)
     case double(Double)
     case stringArray([String])
+    case dictStringVariant([String: DBusBasicValue])
     case structure([DBusBasicValue])
     /// Rencontré mais non géré (struct/array/variant/other types)
     case unsupported(Int32)
@@ -39,6 +40,8 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
             return "double(\(value))"
         case .stringArray(let values):
             return "stringArray(\(values))"
+        case .dictStringVariant(let values):
+            return "dictStringVariant(\(values))"
         case .structure(let values):
             return "structure(\(values))"
         case .unsupported(let typeCode):
@@ -60,6 +63,8 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
             return DBusTypeCode.DOUBLE
         case .stringArray, .structure, .unsupported:
             return nil
+        case .dictStringVariant:
+            return nil
         }
     }
 
@@ -77,6 +82,8 @@ public enum DBusBasicValue: CustomStringConvertible, Equatable, Sendable {
             return "d"
         case .stringArray:
             return "as"
+        case .dictStringVariant:
+            return "a{sv}"
         case .structure(let values):
             let inner = values.map { $0.typeSignatureFragment }.joined()
             return "(\(inner))"
@@ -96,6 +103,11 @@ public protocol DBusReturnDecodable {
 }
 
 public protocol DBusPropertyConvertible: DBusBasicEncodable, DBusBasicDecodable {}
+
+/// Types that know their DBus basic signature at compile time.
+public protocol DBusStaticSignature {
+    static var dbusSignature: String { get }
+}
 
 public protocol DBusArgumentEncodable {
     func encodeArguments(into encoder: inout DBusArgumentEncoder) throws
@@ -117,8 +129,9 @@ public protocol DBusBasicDecodable: DBusReturnDecodable {
     static func decode(from value: DBusBasicValue) throws -> Self
 }
 
-extension String: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
+extension String: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible, DBusStaticSignature {
     public var dbusValue: DBusBasicValue { .string(self) }
+    public static let dbusSignature = "s"
     public static func decode(from value: DBusBasicValue) throws -> String {
         guard case .string(let string) = value else {
             throw DBusDecodeError.typeMismatch(expected: "string", value: value)
@@ -127,8 +140,9 @@ extension String: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertibl
     }
 }
 
-extension Int32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
+extension Int32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible, DBusStaticSignature {
     public var dbusValue: DBusBasicValue { .int32(self) }
+    public static let dbusSignature = "i"
     public static func decode(from value: DBusBasicValue) throws -> Int32 {
         guard case .int32(let intValue) = value else {
             throw DBusDecodeError.typeMismatch(expected: "int32", value: value)
@@ -137,8 +151,9 @@ extension Int32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible
     }
 }
 
-extension UInt32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
+extension UInt32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible, DBusStaticSignature {
     public var dbusValue: DBusBasicValue { .uint32(self) }
+    public static let dbusSignature = "u"
     public static func decode(from value: DBusBasicValue) throws -> UInt32 {
         switch value {
         case .uint32(let value):
@@ -151,8 +166,9 @@ extension UInt32: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertibl
     }
 }
 
-extension Bool: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
+extension Bool: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible, DBusStaticSignature {
     public var dbusValue: DBusBasicValue { .bool(self) }
+    public static let dbusSignature = "b"
     public static func decode(from value: DBusBasicValue) throws -> Bool {
         guard case .bool(let boolValue) = value else {
             throw DBusDecodeError.typeMismatch(expected: "bool", value: value)
@@ -161,8 +177,9 @@ extension Bool: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible 
     }
 }
 
-extension Double: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible {
+extension Double: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertible, DBusStaticSignature {
     public var dbusValue: DBusBasicValue { .double(self) }
+    public static let dbusSignature = "d"
     public static func decode(from value: DBusBasicValue) throws -> Double {
         guard case .double(let doubleValue) = value else {
             throw DBusDecodeError.typeMismatch(expected: "double", value: value)
@@ -172,9 +189,10 @@ extension Double: DBusBasicEncodable, DBusBasicDecodable, DBusPropertyConvertibl
 }
 
 extension Array: DBusBasicEncodable, DBusBasicDecodable, DBusReturnDecodable,
-    DBusPropertyConvertible
+    DBusPropertyConvertible, DBusStaticSignature
 where Element == String {
     public var dbusValue: DBusBasicValue { .stringArray(self) }
+    public static let dbusSignature = "as"
     public static func decode(from value: DBusBasicValue) throws -> [String] {
         guard case .stringArray(let strings) = value else {
             throw DBusDecodeError.typeMismatch(expected: "string array", value: value)

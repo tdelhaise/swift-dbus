@@ -50,6 +50,40 @@ public final class DBusPropertyCache: @unchecked Sendable {
     }
 }
 
+public final class DBusPropertyCacheSubscription: Sendable {
+    private let task: Task<Void, Never>
+
+    init(task: Task<Void, Never>) {
+        self.task = task
+    }
+
+    deinit {
+        task.cancel()
+    }
+
+    public func cancel() {
+        task.cancel()
+    }
+}
+
+public struct DBusPropertiesChanged: DBusSignalDecodable {
+    public static let member = "PropertiesChanged"
+
+    public let interface: String
+    public let changed: [String: DBusBasicValue]
+    public let invalidated: [String]
+
+    public init(signal: DBusSignal, decoder: inout DBusDecoder) throws {
+        interface = try decoder.next()
+        let dictValue = try decoder.nextValue()
+        guard case .dictStringVariant(let dictionary) = dictValue else {
+            throw DBusDecodeError.typeMismatch(expected: "a{sv}", value: dictValue)
+        }
+        changed = dictionary
+        invalidated = try decoder.next()
+    }
+}
+
 /// Point d’entrée haut niveau pour consommer une interface DBus donnée (M4).
 public struct DBusProxy: Sendable {
     public let connection: DBusConnection
@@ -291,6 +325,31 @@ public struct DBusProxy: Sendable {
 
     // MARK: - Properties helpers (org.freedesktop.DBus.Properties)
 
+    public func propertiesChangedStream() throws -> AsyncStream<DBusPropertiesChanged> {
+        let rule = DBusMatchRule.signal(
+            path: path,
+            interface: "org.freedesktop.DBus.Properties",
+            member: DBusPropertiesChanged.member,
+            arg0: interface
+        )
+        let raw = try connection.signals(matching: rule)
+        return AsyncStream<DBusPropertiesChanged> { continuation in
+            let task = Task {
+                for await signal in raw {
+                    var decoder = DBusDecoder(values: signal.args)
+                    do {
+                        let change = try DBusPropertiesChanged(signal: signal, decoder: &decoder)
+                        continuation.yield(change)
+                    } catch {
+                        continue
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     public func getProperty(
         _ property: String,
         timeoutMS: Int32 = 2000
@@ -379,6 +438,43 @@ public struct DBusProxy: Sendable {
                     && key.interface == interface
             }
         }
+    }
+
+    @discardableResult
+    public func autoInvalidatePropertyCache(
+        _ cache: DBusPropertyCache
+    ) throws -> DBusPropertyCacheSubscription {
+        let stream = try propertiesChangedStream()
+        let destination = destination
+        let path = path
+        let interface = interface
+
+        let task = Task {
+            for await change in stream {
+                for name in change.changed.keys {
+                    cache.removeValue(
+                        for: DBusPropertyKey(
+                            destination: destination,
+                            path: path,
+                            interface: interface,
+                            name: name
+                        )
+                    )
+                }
+                for name in change.invalidated {
+                    cache.removeValue(
+                        for: DBusPropertyKey(
+                            destination: destination,
+                            path: path,
+                            interface: interface,
+                            name: name
+                        )
+                    )
+                }
+            }
+        }
+
+        return DBusPropertyCacheSubscription(task: task)
     }
 
     private func propertiesProxy() -> DBusProxy {

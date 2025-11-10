@@ -182,6 +182,11 @@ for await signal in typedStream {
 final class EchoObject: DBusObject {
     static let interface = "org.example.Echo"
     static let path = "/org/example/Echo"
+    static let pingedSignal = DBusSignalDescription(
+        name: "Pinged",
+        arguments: [.field("payload", signature: "s")],
+        documentation: "Signale l’envoi d’un message."
+    )
 
     var methods: [DBusMethod] {
         [
@@ -195,21 +200,15 @@ final class EchoObject: DBusObject {
             },
             .returning("Send") { call, decoder in
                 let payload: String = try decoder.next()
-                try call.signalEmitter.emit(member: "Pinged", values: [.string(payload)])
+                try call.signalEmitter.emit(Self.pingedSignal) { encoder in
+                    encoder.encode(payload)
+                }
                 return payload
             }
         ]
     }
 
-    var signals: [DBusSignalDescription] {
-        [
-            DBusSignalDescription(
-                name: "Pinged",
-                arguments: [.field("payload", signature: "s")],
-                documentation: "Signale l’envoi d’un message."
-            )
-        ]
-    }
+    var signals: [DBusSignalDescription] { [Self.pingedSignal] }
 }
 
 let connection = try DBusConnection(bus: .session)
@@ -254,6 +253,16 @@ les propriétés dans l’introspection si vous ne fournissez pas de XML personn
 Utilisez `emitPropertiesChanged` pour prévenir les clients qui mettent en cache leurs valeurs.
 
 Les clients peuvent ensuite appeler `Echo` ou écouter le signal `Pinged` via un `DBusProxy`.
+
+### Consulter l’introspection côté client
+
+```swift
+if let interfaceInfo = try proxy.introspectedInterface() {
+    print("Méthodes exposées :", interfaceInfo.methods.map(\.name))
+    print("Signaux :", interfaceInfo.signals.map(\.name))
+    print("Propriétés :", interfaceInfo.properties.map(\.name))
+}
+```
 
 ## CI (Ubuntu)
 

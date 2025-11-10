@@ -223,7 +223,32 @@ final class ServerTests: XCTestCase {
             "Signals should be reflected in introspection"
         )
 
+        let interfaceInfo = try proxy.introspectedInterface()
+        XCTAssertEqual(interfaceInfo?.methods.first?.name, "Describe")
+        XCTAssertEqual(interfaceInfo?.signals.first?.name, "Updated")
+        XCTAssertEqual(interfaceInfo?.properties.first?.name, "Mode")
+
         _ = try serverConnection.releaseName(tempName)
+    }
+
+    func testSignalHelperValidatesPayloadCount() throws {
+        let connection = try DBusConnection(bus: .session)
+        let emitter = DBusSignalEmitter(
+            connection: connection,
+            path: "/org/swiftdbus/tests/Signals",
+            interface: "org.swiftdbus.tests.Signals"
+        )
+        let description = DBusSignalDescription(
+            name: "Mismatch",
+            arguments: [.field("value", signature: "s")]
+        )
+        XCTAssertThrowsError(try emitter.emit(description, values: [])) { error in
+            guard case DBusServerError.invalidSignalArguments(let expected, let got) = error else {
+                return XCTFail("Unexpected error \(error)")
+            }
+            XCTAssertEqual(expected, 1)
+            XCTAssertEqual(got, 0)
+        }
     }
 }
 
@@ -250,6 +275,11 @@ private func withTimeout<T: Sendable>(
 private final class EchoObject: DBusObject, @unchecked Sendable {
     static let interface = "org.swiftdbus.tests.Echo"
     static let path = "/org/swiftdbus/tests/Echo"
+    static let pingedSignal = DBusSignalDescription(
+        name: "Pinged",
+        arguments: [.field("payload", signature: "s")],
+        documentation: "Echo object emitted signal."
+    )
 
     var introspectionXML: String? {
         """
@@ -292,11 +322,15 @@ private final class EchoObject: DBusObject, @unchecked Sendable {
             },
             .void("Send") { call, decoder in
                 let payload: String = try decoder.next()
-                try call.signalEmitter.emit(member: "Pinged", values: [.string(payload)])
+                try call.signalEmitter.emit(Self.pingedSignal) { encoder in
+                    encoder.encode(payload)
+                }
                 self.incrementSend()
             }
         ]
     }
+
+    var signals: [DBusSignalDescription] { [Self.pingedSignal] }
 
     private func incrementEcho() {
         lock.lock()

@@ -121,6 +121,20 @@ public struct DBusArgumentEncoder {
     }
 }
 
+public struct DBusSignalArgumentsEncoder {
+    fileprivate(set) var values: [DBusBasicValue] = []
+
+    public init() {}
+
+    public mutating func encode<T: DBusBasicEncodable>(_ value: T) {
+        values.append(value.dbusValue)
+    }
+
+    public mutating func encodeRaw(_ value: DBusBasicValue) {
+        values.append(value)
+    }
+}
+
 public protocol DBusBasicEncodable: DBusArgumentEncodable {
     var dbusValue: DBusBasicValue { get }
 }

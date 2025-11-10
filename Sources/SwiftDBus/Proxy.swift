@@ -1,5 +1,7 @@
+// swiftlint:disable file_length
 import CDbus
 import Foundation
+import FoundationXML
 
 public struct DBusPropertyKey: Hashable, Sendable {
     public let destination: String
@@ -12,6 +14,199 @@ public struct DBusPropertyKey: Hashable, Sendable {
         self.path = path
         self.interface = interface
         self.name = name
+    }
+}
+
+public struct DBusIntrospectedArgument: Sendable {
+    public let name: String
+    public let type: String
+    public let direction: String?
+}
+
+public struct DBusIntrospectedMethod: Sendable {
+    public let name: String
+    public let arguments: [DBusIntrospectedArgument]
+    public let documentation: String?
+}
+
+public struct DBusIntrospectedSignal: Sendable {
+    public let name: String
+    public let arguments: [DBusIntrospectedArgument]
+    public let documentation: String?
+}
+
+public struct DBusIntrospectedProperty: Sendable {
+    public let name: String
+    public let type: String
+    public let access: String
+    public let documentation: String?
+}
+
+public struct DBusIntrospectedInterface: Sendable {
+    public let name: String
+    public let methods: [DBusIntrospectedMethod]
+    public let signals: [DBusIntrospectedSignal]
+    public let properties: [DBusIntrospectedProperty]
+}
+
+private final class DBusIntrospectionXMLParser: NSObject, XMLParserDelegate {
+
+    private struct MethodBuilder {
+        let name: String
+        var arguments: [DBusIntrospectedArgument] = []
+        var documentation: String?
+
+        func build() -> DBusIntrospectedMethod {
+            DBusIntrospectedMethod(name: name, arguments: arguments, documentation: documentation)
+        }
+    }
+
+    private struct SignalBuilder {
+        let name: String
+        var arguments: [DBusIntrospectedArgument] = []
+        var documentation: String?
+
+        func build() -> DBusIntrospectedSignal {
+            DBusIntrospectedSignal(name: name, arguments: arguments, documentation: documentation)
+        }
+    }
+
+    private struct PropertyBuilder {
+        let name: String
+        let type: String
+        let access: String
+        var documentation: String?
+
+        func build() -> DBusIntrospectedProperty {
+            DBusIntrospectedProperty(name: name, type: type, access: access, documentation: documentation)
+        }
+    }
+
+    private let targetInterface: String
+    private var currentInterface: String?
+    private var currentMethod: MethodBuilder?
+    private var currentSignal: SignalBuilder?
+    private var currentProperty: PropertyBuilder?
+    private var methods: [DBusIntrospectedMethod] = []
+    private var signals: [DBusIntrospectedSignal] = []
+    private var properties: [DBusIntrospectedProperty] = []
+    private var result: DBusIntrospectedInterface?
+
+    init(targetInterface: String) {
+        self.targetInterface = targetInterface
+    }
+
+    func parse(xml: String) throws -> DBusIntrospectedInterface? {
+        guard let data = xml.data(using: .utf8) else {
+            throw DBusConnection.Error.failed("Invalid introspection XML encoding")
+        }
+        let parser = XMLParser(data: data)
+        parser.delegate = self
+        if parser.parse() {
+            return result
+        }
+        if let error = parser.parserError {
+            throw DBusConnection.Error.failed("Introspection parsing failed: \(error.localizedDescription)")
+        }
+        return result
+    }
+
+    // swiftlint:disable:next cyclomatic_complexity
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String]
+    ) {
+        switch elementName {
+        case "interface":
+            currentInterface = attributeDict["name"]
+            if currentInterface == targetInterface {
+                methods.removeAll()
+                signals.removeAll()
+                properties.removeAll()
+            }
+        case "method":
+            guard currentInterface == targetInterface else { return }
+            currentMethod = MethodBuilder(name: attributeDict["name"] ?? "")
+        case "signal":
+            guard currentInterface == targetInterface else { return }
+            currentSignal = SignalBuilder(name: attributeDict["name"] ?? "")
+        case "property":
+            guard currentInterface == targetInterface else { return }
+            currentProperty = PropertyBuilder(
+                name: attributeDict["name"] ?? "",
+                type: attributeDict["type"] ?? "",
+                access: attributeDict["access"] ?? ""
+            )
+        case "arg":
+            guard currentInterface == targetInterface else { return }
+            let argument = DBusIntrospectedArgument(
+                name: attributeDict["name"] ?? "",
+                type: attributeDict["type"] ?? "",
+                direction: attributeDict["direction"]
+            )
+            if var method = currentMethod {
+                method.arguments.append(argument)
+                currentMethod = method
+            } else if var signal = currentSignal {
+                signal.arguments.append(argument)
+                currentSignal = signal
+            }
+        case "annotation":
+            guard currentInterface == targetInterface else { return }
+            guard attributeDict["name"] == "org.freedesktop.DBus.DocString" else { return }
+            let doc = attributeDict["value"]
+            if var method = currentMethod {
+                method.documentation = doc
+                currentMethod = method
+            } else if var signal = currentSignal {
+                signal.documentation = doc
+                currentSignal = signal
+            } else if var property = currentProperty {
+                property.documentation = doc
+                currentProperty = property
+            }
+        default:
+            break
+        }
+    }
+
+    func parser(
+        _ parser: XMLParser,
+        didEndElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?
+    ) {
+        switch elementName {
+        case "method":
+            guard let method = currentMethod else { return }
+            methods.append(method.build())
+            currentMethod = nil
+        case "signal":
+            guard let signal = currentSignal else { return }
+            signals.append(signal.build())
+            currentSignal = nil
+        case "property":
+            guard let property = currentProperty else { return }
+            properties.append(property.build())
+            currentProperty = nil
+        case "interface":
+            guard currentInterface == targetInterface else {
+                currentInterface = nil
+                return
+            }
+            result = DBusIntrospectedInterface(
+                name: targetInterface,
+                methods: methods,
+                signals: signals,
+                properties: properties
+            )
+            currentInterface = nil
+        default:
+            break
+        }
     }
 }
 
@@ -475,6 +670,23 @@ public struct DBusProxy: Sendable {
         }
 
         return DBusPropertyCacheSubscription(task: task)
+    }
+
+    public func introspectionXML(timeoutMS: Int32 = 2000) throws -> String {
+        try DBusProxy(
+            connection: connection,
+            destination: destination,
+            path: path,
+            interface: "org.freedesktop.DBus.Introspectable"
+        ).callExpectingSingle("Introspect", timeoutMS: timeoutMS)
+    }
+
+    public func introspectedInterface(
+        timeoutMS: Int32 = 2000
+    ) throws -> DBusIntrospectedInterface? {
+        let xml = try introspectionXML(timeoutMS: timeoutMS)
+        let parser = DBusIntrospectionXMLParser(targetInterface: interface)
+        return try parser.parse(xml: xml)
     }
 
     private func propertiesProxy() -> DBusProxy {

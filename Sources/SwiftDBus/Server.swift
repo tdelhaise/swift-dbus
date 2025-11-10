@@ -10,6 +10,7 @@ public enum DBusServerError: Swift.Error, CustomStringConvertible {
     case objectNotFound(path: String, interface: String)
     case methodNotFound(String)
     case sendFailed(String)
+    case invalidSignalArguments(expected: Int, got: Int)
 
     public var description: String {
         switch self {
@@ -23,6 +24,8 @@ public enum DBusServerError: Swift.Error, CustomStringConvertible {
             return "Unknown method \(method)"
         case .sendFailed(let reason):
             return "Failed to send DBus message (\(reason))"
+        case .invalidSignalArguments(let expected, let got):
+            return "Invalid signal payload (expected \(expected) values, got \(got))"
         }
     }
 }
@@ -389,6 +392,23 @@ public struct DBusSignalEmitter: Sendable {
         }
     }
 
+    public func emit(
+        _ signal: DBusSignalDescription,
+        values: [DBusBasicValue]
+    ) throws {
+        try validate(values: values, against: signal)
+        try emit(member: signal.name, values: values)
+    }
+
+    public func emit(
+        _ signal: DBusSignalDescription,
+        encode buildArguments: (inout DBusSignalArgumentsEncoder) throws -> Void
+    ) throws {
+        var encoder = DBusSignalArgumentsEncoder()
+        try buildArguments(&encoder)
+        try emit(signal, values: encoder.values)
+    }
+
     public func emitPropertiesChanged(
         interface changedInterface: String,
         changed: [String: DBusBasicValue],
@@ -421,6 +441,16 @@ public struct DBusSignalEmitter: Sendable {
             }
             dbus_connection_flush(connPointer)
             dbus_message_unref(signal)
+        }
+    }
+
+    private func validate(values: [DBusBasicValue], against signal: DBusSignalDescription) throws {
+        guard !signal.arguments.isEmpty else { return }
+        guard signal.arguments.count == values.count else {
+            throw DBusServerError.invalidSignalArguments(
+                expected: signal.arguments.count,
+                got: values.count
+            )
         }
     }
 }

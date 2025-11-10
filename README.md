@@ -240,13 +240,7 @@ final class SettingsObject: DBusObject {
             .readWrite(
                 "Count",
                 get: { _ in self.count },
-                set: { newValue, invocation in
-                    self.count = newValue
-                    try invocation.signalEmitter.emitPropertiesChanged(
-                        interface: Self.interface,
-                        changed: ["Count": newValue.dbusValue]
-                    )
-                }
+                set: { newValue, _ in self.count = newValue }
             )
         ]
     }
@@ -255,7 +249,9 @@ final class SettingsObject: DBusObject {
 
 L’exporteur gère automatiquement `org.freedesktop.DBus.Properties` (`Get`, `Set`, `GetAll`) et injecte
 les propriétés dans l’introspection si vous ne fournissez pas de XML personnalisé.
-Utilisez `emitPropertiesChanged` pour prévenir les clients qui mettent en cache leurs valeurs.
+Les propriétés `readWrite`/`writeOnly` émettent `PropertiesChanged` par défaut avec la valeur
+mise à jour (ou la liste `invalidated` pour les propriétés write-only), ce qui maintient les caches
+côté clients synchronisés sans code supplémentaire.
 
 Les clients peuvent ensuite appeler `Echo` ou écouter le signal `Pinged` via un `DBusProxy`.
 

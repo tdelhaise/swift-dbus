@@ -81,14 +81,10 @@ final class PropertyObject: DBusObject, @unchecked Sendable {
                     defer { self.lock.unlock() }
                     return self.count
                 },
-                set: { newValue, invocation in
+                set: { newValue, _ in
                     self.lock.lock()
                     self.count = newValue
                     self.lock.unlock()
-                    try invocation.signalEmitter.emitPropertiesChanged(
-                        interface: Self.interface,
-                        changed: ["Count": newValue.dbusValue]
-                    )
                 }
             )
         ]
@@ -187,4 +183,31 @@ final class CustomIntrospectionObject: DBusObject, @unchecked Sendable {
         """
 
     var introspectionXML: String? { Self.customXML }
+}
+
+final class WriteOnlyPropertyObject: DBusObject, @unchecked Sendable {
+    static let interface = "org.swiftdbus.tests.WriteOnly"
+    static let path = "/org/swiftdbus/tests/WriteOnly"
+
+    private let lock = NSLock()
+    private var lastValue: Int32 = 0
+
+    var properties: [DBusProperty] {
+        [
+            .writeOnly(
+                "Trigger",
+                documentation: "Write-only trigger property."
+            ) { value, _ in
+                self.lock.lock()
+                self.lastValue = value
+                self.lock.unlock()
+            }
+        ]
+    }
+
+    func recordedValue() -> Int32 {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastValue
+    }
 }

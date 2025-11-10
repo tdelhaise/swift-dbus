@@ -281,6 +281,44 @@ final class ServerTests: XCTestCase {
         _ = try competingConnection.releaseName(tempName)
     }
 
+    func testWriteOnlyPropertyEmitsInvalidated() async throws {
+        let serverConnection = try DBusConnection(bus: .session)
+        let exporter = DBusObjectExporter(connection: serverConnection)
+        let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.server.writeonly")
+        let object = WriteOnlyPropertyObject()
+        let registration = try exporter.register(object, busName: tempName)
+        defer { registration.cancel() }
+
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let clientConnection = try DBusConnection(bus: .session)
+        let proxy = DBusProxy(
+            connection: clientConnection,
+            destination: tempName,
+            path: WriteOnlyPropertyObject.path,
+            interface: WriteOnlyPropertyObject.interface
+        )
+        let changes = try proxy.propertiesChangedStream()
+        let signalTask = Task<DBusPropertiesChanged?, Never> {
+            for await change in changes {
+                return change
+            }
+            return nil
+        }
+
+        try proxy.setProperty("Trigger", value: Int32(42))
+
+        let change = try await withTimeout(seconds: 10) {
+            await signalTask.value
+        }
+        guard let change else {
+            XCTFail("Expected PropertiesChanged")
+            return
+        }
+        XCTAssertTrue(change.changed.isEmpty)
+        XCTAssertEqual(change.invalidated, ["Trigger"])
+    }
+
     func testIntrospectionListsMultipleInterfaces() async throws {
         let serverConnection = try DBusConnection(bus: .session)
         let exporter = DBusObjectExporter(connection: serverConnection)

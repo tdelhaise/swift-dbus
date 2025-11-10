@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - (prévu M6) Générateur de code à partir d’introspection XML.
 - `DBusObjectExporter.register` now returns a `DBusObjectRegistration` handle (RAII) and can request/release bus names automatically.
 - Introspection responses now aggregate every interface registered on a path and list child nodes, matching DBus expectations.
+- Read/write properties automatically emit `PropertiesChanged` (or `invalidated`) after successful setters so clients can refresh caches without manual code.
 
 ### Tests
 - `ProxyTests`: appels RequestName/ReleaseName, décodage signal typé, propriétés typées, `GetAll`.

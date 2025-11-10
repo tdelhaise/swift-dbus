@@ -248,6 +248,7 @@ public struct DBusProperty {
     let setter: Setter?
     public let documentation: String?
     public let annotations: [DBusIntrospectionAnnotation]
+    public let emitsChangeSignal: Bool
 
     public init(
         name: String,
@@ -256,7 +257,8 @@ public struct DBusProperty {
         getter: Getter? = nil,
         setter: Setter? = nil,
         documentation: String? = nil,
-        annotations: [DBusIntrospectionAnnotation] = []
+        annotations: [DBusIntrospectionAnnotation] = [],
+        emitsChangeSignal: Bool = false
     ) {
         self.name = name
         self.signature = signature
@@ -265,12 +267,14 @@ public struct DBusProperty {
         self.setter = setter
         self.documentation = documentation
         self.annotations = annotations
+        self.emitsChangeSignal = emitsChangeSignal
     }
 
     public static func readOnly<T>(
         _ name: String,
         documentation: String? = nil,
         annotations: [DBusIntrospectionAnnotation] = [],
+        emitsChangeSignal: Bool = false,
         _ getter: @escaping @Sendable (DBusPropertyInvocation) throws -> T
     ) -> DBusProperty where T: DBusPropertyConvertible & DBusStaticSignature & Sendable {
         DBusProperty(
@@ -280,7 +284,8 @@ public struct DBusProperty {
             getter: { invocation in try getter(invocation).dbusValue },
             setter: nil,
             documentation: documentation,
-            annotations: annotations
+            annotations: annotations,
+            emitsChangeSignal: emitsChangeSignal
         )
     }
 
@@ -288,6 +293,7 @@ public struct DBusProperty {
         _ name: String,
         documentation: String? = nil,
         annotations: [DBusIntrospectionAnnotation] = [],
+        emitsChangeSignal: Bool = true,
         get getter: @escaping @Sendable (DBusPropertyInvocation) throws -> T,
         set setter: @escaping @Sendable (T, DBusPropertyInvocation) throws -> Void
     ) -> DBusProperty where T: DBusPropertyConvertible & DBusStaticSignature & Sendable {
@@ -301,7 +307,8 @@ public struct DBusProperty {
                 try setter(typed, invocation)
             },
             documentation: documentation,
-            annotations: annotations
+            annotations: annotations,
+            emitsChangeSignal: emitsChangeSignal
         )
     }
 
@@ -309,6 +316,7 @@ public struct DBusProperty {
         _ name: String,
         documentation: String? = nil,
         annotations: [DBusIntrospectionAnnotation] = [],
+        emitsChangeSignal: Bool = true,
         set setter: @escaping @Sendable (T, DBusPropertyInvocation) throws -> Void
     ) -> DBusProperty where T: DBusPropertyConvertible & DBusStaticSignature & Sendable {
         DBusProperty(
@@ -321,7 +329,8 @@ public struct DBusProperty {
                 try setter(typed, invocation)
             },
             documentation: documentation,
-            annotations: annotations
+            annotations: annotations,
+            emitsChangeSignal: emitsChangeSignal
         )
     }
 
@@ -733,6 +742,12 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
             )
             do {
                 try setter(value, invocation)
+                if property.emitsChangeSignal {
+                    try emitAutomaticPropertiesChanged(
+                        property: property,
+                        invocation: invocation
+                    )
+                }
                 try sendReturn(for: message, values: [])
             } catch {
                 try? sendFailure(for: message, error: error)
@@ -776,7 +791,7 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
     }
 
     private func introspectionXML(atPath path: String) throws -> String {
-        let entries = objects(atPath: path)
+        let entries = objects(atPath: path).sorted { $0.interface < $1.interface }
         if entries.count == 1, let provided = entries.first?.introspectionXML {
             return provided
         }
@@ -996,6 +1011,31 @@ public final class DBusObjectExporter: @unchecked Sendable {  // swiftlint:disab
             for: message,
             name: "org.freedesktop.DBus.Error.InvalidArgs",
             description: "Invalid property arguments"
+        )
+    }
+
+    private func emitAutomaticPropertiesChanged(
+        property: DBusProperty,
+        invocation: DBusPropertyInvocation
+    ) throws {
+        var changed: [String: DBusBasicValue] = [:]
+        var invalidated: [String] = []
+        if property.isReadable, let getter = property.getter {
+            if let currentValue = try? getter(invocation) {
+                changed[property.name] = currentValue
+            } else {
+                invalidated.append(property.name)
+            }
+        } else {
+            invalidated.append(property.name)
+        }
+        if changed.isEmpty, invalidated.isEmpty {
+            return
+        }
+        try invocation.signalEmitter.emitPropertiesChanged(
+            interface: invocation.interface,
+            changed: changed,
+            invalidated: invalidated
         )
     }
 

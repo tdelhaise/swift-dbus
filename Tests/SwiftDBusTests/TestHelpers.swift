@@ -10,11 +10,15 @@ func makeTemporaryBusName(
     return "\(prefix).x\(random.prefix(suffixLength))"
 }
 
-func makeBusProxy(_ connection: DBusConnection) -> DBusProxy {
+func makeBusProxy(
+    _ connection: DBusConnection,
+    caches: DBusProxyCaches = DBusProxyCaches()
+) -> DBusProxy {
     DBusProxy(
         connection: connection,
         destination: "org.freedesktop.DBus",
         path: "/org/freedesktop/DBus",
-        interface: "org.freedesktop.DBus"
+        interface: "org.freedesktop.DBus",
+        caches: caches
     )
 }

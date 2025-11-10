@@ -49,6 +49,60 @@ public struct DBusIntrospectedInterface: Sendable {
     public let properties: [DBusIntrospectedProperty]
 }
 
+public struct DBusProxyCaches: Sendable {
+    public let propertyCache: DBusPropertyCache?
+    public let introspectionCache: DBusIntrospectionCache?
+
+    public init(
+        propertyCache: DBusPropertyCache? = nil,
+        introspectionCache: DBusIntrospectionCache? = nil
+    ) {
+        self.propertyCache = propertyCache
+        self.introspectionCache = introspectionCache
+    }
+}
+
+public enum DBusProxyMetadataError: Error, Equatable, CustomStringConvertible {
+    case interfaceUnavailable(String)
+    case missingProperty(String)
+    case propertyTypeMismatch(property: String, expected: String, actual: String)
+    case propertyNotReadable(String)
+    case propertyNotWritable(String)
+    case missingMethod(String)
+    case methodMissingReturn(String)
+    case methodMultipleReturns(String)
+    case methodReturnMismatch(method: String, expected: String, actual: String)
+    case methodArgumentCountMismatch(method: String, expected: Int, actual: Int)
+    case missingSignal(String)
+
+    public var description: String {
+        switch self {
+        case .interfaceUnavailable(let name):
+            return "Introspection for interface \(name) is not available"
+        case .missingProperty(let name):
+            return "Property \(name) is not declared in introspection data"
+        case .propertyTypeMismatch(let property, let expected, let actual):
+            return "Property \(property) expects signature \(actual) but caller requested \(expected)"
+        case .propertyNotReadable(let property):
+            return "Property \(property) is not readable"
+        case .propertyNotWritable(let property):
+            return "Property \(property) is not writable"
+        case .missingMethod(let name):
+            return "Method \(name) is not declared in introspection data"
+        case .methodMissingReturn(let method):
+            return "Method \(method) does not expose any output arguments"
+        case .methodMultipleReturns(let method):
+            return "Method \(method) exposes multiple output arguments which is not supported by typed helpers"
+        case .methodReturnMismatch(let method, let expected, let actual):
+            return "Method \(method) returns signature \(actual) but caller expected \(expected)"
+        case .methodArgumentCountMismatch(let method, let expected, let actual):
+            return "Method \(method) expects \(expected) input arguments but received \(actual)"
+        case .missingSignal(let name):
+            return "Signal \(name) is not declared in introspection data"
+        }
+    }
+}
+
 private final class DBusIntrospectionXMLParser: NSObject, XMLParserDelegate {
 
     private struct MethodBuilder {
@@ -336,23 +390,27 @@ public struct DBusPropertiesChanged: DBusSignalDecodable {
     }
 }
 
+// swiftlint:disable type_body_length
 /// Point d’entrée haut niveau pour consommer une interface DBus donnée (M4).
 public struct DBusProxy: Sendable {
     public let connection: DBusConnection
     public let destination: String
     public let path: String
     public let interface: String
+    public let caches: DBusProxyCaches
 
     public init(
         connection: DBusConnection,
         destination: String,
         path: String,
-        interface: String
+        interface: String,
+        caches: DBusProxyCaches = DBusProxyCaches()
     ) {
         self.connection = connection
         self.destination = destination
         self.path = path
         self.interface = interface
+        self.caches = caches
     }
 
     /// Appel brut avec writer d’arguments explicite.
@@ -625,12 +683,13 @@ public struct DBusProxy: Sendable {
         refreshCache: Bool = false
     ) throws -> T {
         let cacheKey = makePropertyKey(property)
-        if let cache, !refreshCache, let cached = cache.value(for: cacheKey) {
+        let resolvedCache = cache ?? caches.propertyCache
+        if let resolvedCache, !refreshCache, let cached = resolvedCache.value(for: cacheKey) {
             return try type.decode(from: cached)
         }
 
         let value = try getProperty(property, timeoutMS: timeoutMS)
-        cache?.store(value, for: cacheKey)
+        resolvedCache?.store(value, for: cacheKey)
         return try type.decode(from: value)
     }
 
@@ -653,7 +712,8 @@ public struct DBusProxy: Sendable {
         cache: DBusPropertyCache? = nil
     ) throws {
         try setProperty(property, value: value.dbusValue, timeoutMS: timeoutMS)
-        cache?.store(value.dbusValue, for: makePropertyKey(property))
+        let resolvedCache = cache ?? caches.propertyCache
+        resolvedCache?.store(value.dbusValue, for: makePropertyKey(property))
     }
 
     public func getAllProperties(
@@ -666,9 +726,10 @@ public struct DBusProxy: Sendable {
             timeoutMS: timeoutMS
         )
         let dict = try DBusMarshal.firstDictStringVariantBasics(reply)
-        if let cache {
+        let resolvedCache = cache ?? caches.propertyCache
+        if let resolvedCache {
             for (property, value) in dict {
-                cache.store(value, for: makePropertyKey(property))
+                resolvedCache.store(value, for: makePropertyKey(property))
             }
         }
         return dict
@@ -690,6 +751,11 @@ public struct DBusProxy: Sendable {
                     && key.interface == interface
             }
         }
+    }
+
+    public func invalidateCachedProperties(_ property: String? = nil) {
+        guard let cache = caches.propertyCache else { return }
+        invalidatePropertyCache(property, cache: cache)
     }
 
     @discardableResult
@@ -729,6 +795,14 @@ public struct DBusProxy: Sendable {
         return DBusPropertyCacheSubscription(task: task)
     }
 
+    @discardableResult
+    public func autoInvalidateCachedPropertyCache() throws -> DBusPropertyCacheSubscription {
+        guard let cache = caches.propertyCache else {
+            throw DBusConnection.Error.failed("No property cache configured on this proxy")
+        }
+        return try autoInvalidatePropertyCache(cache)
+    }
+
     public func introspectionXML(timeoutMS: Int32 = 2000) throws -> String {
         try DBusProxy(
             connection: connection,
@@ -740,17 +814,19 @@ public struct DBusProxy: Sendable {
 
     public func introspectedInterface(
         timeoutMS: Int32 = 2000,
-        cache: DBusIntrospectionCache? = nil
+        cache: DBusIntrospectionCache? = nil,
+        forceRefresh: Bool = false
     ) throws -> DBusIntrospectedInterface? {
+        let resolvedCache = cache ?? caches.introspectionCache
         let key = makeIntrospectionKey()
-        if let cache, let cached = cache.value(for: key) {
+        if !forceRefresh, let resolvedCache, let cached = resolvedCache.value(for: key) {
             return cached
         }
 
         let xml = try introspectionXML(timeoutMS: timeoutMS)
         let parser = DBusIntrospectionXMLParser(targetInterface: interface)
         guard let parsed = try parser.parse(xml: xml) else { return nil }
-        cache?.store(parsed, for: key)
+        resolvedCache?.store(parsed, for: key)
         return parsed
     }
 
@@ -778,5 +854,294 @@ public struct DBusProxy: Sendable {
             path: path,
             interface: interface
         )
+    }
+}
+
+// swiftlint:enable type_body_length
+
+// MARK: - Introspection-powered helpers
+
+extension DBusProxy {
+
+    public var cachedMetadata: Metadata? {
+        guard let interface = cachedIntrospectedInterface() else { return nil }
+        return Metadata(interface: interface)
+    }
+
+    public func cachedIntrospectedInterface(
+        cache: DBusIntrospectionCache? = nil
+    ) -> DBusIntrospectedInterface? {
+        let resolvedCache = cache ?? caches.introspectionCache
+        return resolvedCache?.value(for: makeIntrospectionKey())
+    }
+
+    public func metadata(
+        timeoutMS: Int32 = 2000,
+        cache: DBusIntrospectionCache? = nil,
+        forceRefresh: Bool = false
+    ) throws -> Metadata {
+        guard
+            let interfaceInfo = try introspectedInterface(
+                timeoutMS: timeoutMS,
+                cache: cache,
+                forceRefresh: forceRefresh
+            )
+        else {
+            throw DBusProxyMetadataError.interfaceUnavailable(interface)
+        }
+        return Metadata(interface: interfaceInfo)
+    }
+
+    public func refreshMetadata(
+        timeoutMS: Int32 = 2000,
+        cache: DBusIntrospectionCache? = nil
+    ) throws -> Metadata {
+        try metadata(timeoutMS: timeoutMS, cache: cache, forceRefresh: true)
+    }
+
+    public func invalidateCachedMetadata(
+        cache: DBusIntrospectionCache? = nil
+    ) {
+        let resolvedCache = cache ?? caches.introspectionCache
+        resolvedCache?.removeValue(for: makeIntrospectionKey())
+    }
+
+    public struct Metadata: Sendable {
+        public let interface: DBusIntrospectedInterface
+        private let methodsByName: [String: DBusIntrospectedMethod]
+        private let propertiesByName: [String: DBusIntrospectedProperty]
+        private let signalsByName: [String: DBusIntrospectedSignal]
+
+        fileprivate init(interface: DBusIntrospectedInterface) {
+            self.interface = interface
+            self.methodsByName = interface.methods.reduce(into: [:]) { dict, method in
+                dict[method.name] = method
+            }
+            self.propertiesByName = interface.properties.reduce(into: [:]) { dict, property in
+                dict[property.name] = property
+            }
+            self.signalsByName = interface.signals.reduce(into: [:]) { dict, signal in
+                dict[signal.name] = signal
+            }
+        }
+
+        public var name: String { interface.name }
+        public var methods: [DBusIntrospectedMethod] { interface.methods }
+        public var signals: [DBusIntrospectedSignal] { interface.signals }
+        public var properties: [DBusIntrospectedProperty] { interface.properties }
+
+        public func method(named name: String) -> DBusIntrospectedMethod? {
+            methodsByName[name]
+        }
+
+        public func property(named name: String) -> DBusIntrospectedProperty? {
+            propertiesByName[name]
+        }
+
+        public func signal(named name: String) -> DBusIntrospectedSignal? {
+            signalsByName[name]
+        }
+
+        public func property<Value: DBusPropertyConvertible & DBusStaticSignature>(
+            _ name: String,
+            as type: Value.Type = Value.self
+        ) throws -> PropertyHandle<Value> {
+            guard let property = property(named: name) else {
+                throw DBusProxyMetadataError.missingProperty(name)
+            }
+            guard property.type == Value.dbusSignature else {
+                throw DBusProxyMetadataError.propertyTypeMismatch(
+                    property: property.name,
+                    expected: Value.dbusSignature,
+                    actual: property.type
+                )
+            }
+            return PropertyHandle(property: property)
+        }
+
+        public func method<Return: DBusBasicDecodable & DBusStaticSignature>(
+            _ name: String,
+            returns type: Return.Type = Return.self
+        ) throws -> MethodHandle<Return> {
+            guard let method = method(named: name) else {
+                throw DBusProxyMetadataError.missingMethod(name)
+            }
+            let outputs = method.arguments.filter(\.isOutput)
+            guard !outputs.isEmpty else {
+                throw DBusProxyMetadataError.methodMissingReturn(method.name)
+            }
+            guard outputs.count == 1 else {
+                throw DBusProxyMetadataError.methodMultipleReturns(method.name)
+            }
+            let outputSignature = outputs[0].type
+            guard outputSignature == Return.dbusSignature else {
+                throw DBusProxyMetadataError.methodReturnMismatch(
+                    method: method.name,
+                    expected: Return.dbusSignature,
+                    actual: outputSignature
+                )
+            }
+            let inputs = method.arguments.filter { !$0.isOutput }
+            return MethodHandle(
+                method: method,
+                inputCount: inputs.count,
+                outputSignature: outputSignature
+            )
+        }
+
+        public func signal(_ name: String) throws -> SignalHandle {
+            guard let signal = signal(named: name) else {
+                throw DBusProxyMetadataError.missingSignal(name)
+            }
+            return SignalHandle(signal: signal)
+        }
+
+        public func signal<T: DBusSignalDecodable>(
+            _ type: T.Type
+        ) throws -> TypedSignalHandle<T> {
+            guard let signal = signal(named: type.member) else {
+                throw DBusProxyMetadataError.missingSignal(type.member)
+            }
+            return TypedSignalHandle(signal: signal)
+        }
+    }
+
+    public struct PropertyHandle<Value: DBusPropertyConvertible & DBusStaticSignature>: Sendable {
+        fileprivate let property: DBusIntrospectedProperty
+
+        public var name: String { property.name }
+        public var documentation: String? { property.documentation }
+        public var typeSignature: String { property.type }
+        public var isReadable: Bool { property.isReadable }
+        public var isWritable: Bool { property.isWritable }
+    }
+
+    public struct MethodHandle<Return: DBusBasicDecodable & DBusStaticSignature>: Sendable {
+        fileprivate let method: DBusIntrospectedMethod
+        fileprivate let inputCount: Int
+        fileprivate let outputSignature: String
+
+        public var name: String { method.name }
+        public var documentation: String? { method.documentation }
+        public var inputArgumentCount: Int { inputCount }
+    }
+
+    public struct SignalHandle: Sendable {
+        fileprivate let signal: DBusIntrospectedSignal
+
+        public var name: String { signal.name }
+        public var documentation: String? { signal.documentation }
+    }
+
+    public struct TypedSignalHandle<T: DBusSignalDecodable>: Sendable {
+        fileprivate let signal: DBusIntrospectedSignal
+
+        public var name: String { signal.name }
+        public var documentation: String? { signal.documentation }
+    }
+
+    public func getProperty<T: DBusPropertyConvertible & DBusStaticSignature>(
+        _ handle: PropertyHandle<T>,
+        timeoutMS: Int32 = 2000,
+        cache: DBusPropertyCache? = nil,
+        refreshCache: Bool = false
+    ) throws -> T {
+        guard handle.isReadable else {
+            throw DBusProxyMetadataError.propertyNotReadable(handle.name)
+        }
+        return try getProperty(
+            handle.name,
+            as: T.self,
+            timeoutMS: timeoutMS,
+            cache: cache,
+            refreshCache: refreshCache
+        )
+    }
+
+    public func setProperty<T: DBusPropertyConvertible & DBusStaticSignature>(
+        _ handle: PropertyHandle<T>,
+        value: T,
+        timeoutMS: Int32 = 2000,
+        cache: DBusPropertyCache? = nil
+    ) throws {
+        guard handle.isWritable else {
+            throw DBusProxyMetadataError.propertyNotWritable(handle.name)
+        }
+        try setProperty(
+            handle.name,
+            value: value,
+            timeoutMS: timeoutMS,
+            cache: cache
+        )
+    }
+
+    public func call<Return: DBusBasicDecodable & DBusStaticSignature>(
+        _ handle: MethodHandle<Return>,
+        arguments: [DBusBasicValue] = [],
+        timeoutMS: Int32 = 2000
+    ) throws -> Return {
+        try handle.validateArgumentCount(arguments.count)
+        return try callExpectingSingle(
+            handle.name,
+            arguments: arguments,
+            timeoutMS: timeoutMS
+        )
+    }
+
+    public func call<Return: DBusBasicDecodable & DBusStaticSignature, Args: DBusArgumentEncodable>(
+        _ handle: MethodHandle<Return>,
+        typedArguments arguments: Args,
+        timeoutMS: Int32 = 2000
+    ) throws -> Return {
+        try callExpectingSingle(
+            handle.name,
+            typedArguments: arguments,
+            timeoutMS: timeoutMS
+        )
+    }
+
+    public func signals(
+        _ handle: SignalHandle,
+        arg0: String? = nil
+    ) throws -> AsyncStream<DBusSignal> {
+        try signals(member: handle.name, arg0: arg0)
+    }
+
+    public func signals<T: DBusSignalDecodable>(
+        _ handle: TypedSignalHandle<T>,
+        arg0 overrideArg0: String? = nil
+    ) throws -> AsyncStream<T> {
+        guard handle.name == T.member else {
+            throw DBusProxyMetadataError.missingSignal(T.member)
+        }
+        return try signals(T.self, arg0: overrideArg0 ?? T.arg0)
+    }
+}
+
+extension DBusProxy.MethodHandle {
+    fileprivate func validateArgumentCount(_ actual: Int) throws {
+        guard actual == inputCount else {
+            throw DBusProxyMetadataError.methodArgumentCountMismatch(
+                method: name,
+                expected: inputCount,
+                actual: actual
+            )
+        }
+    }
+}
+
+extension DBusIntrospectedArgument {
+    fileprivate var isOutput: Bool {
+        (direction?.lowercased() == "out")
+    }
+}
+
+extension DBusIntrospectedProperty {
+    fileprivate var isReadable: Bool {
+        access.lowercased().contains("read")
+    }
+
+    fileprivate var isWritable: Bool {
+        access.lowercased().contains("write")
     }
 }

@@ -48,9 +48,11 @@ final class ProxyTests: XCTestCase {
         }
         let connection = try DBusConnection(bus: .session)
         let proxy = makeBusProxy(connection)
+        let metadata = try proxy.metadata()
         let tempName = makeTemporaryBusName(prefix: "org.swiftdbus.proxy.signal")
 
-        let stream = try proxy.signals(NameOwnerChangedSignal.self, arg0: tempName)
+        let signalHandle = try metadata.signal(NameOwnerChangedSignal.self)
+        let stream = try proxy.signals(signalHandle, arg0: tempName)
 
         let _: UInt32 = try proxy.callExpectingSingle(
             "RequestName",
@@ -107,6 +109,50 @@ final class ProxyTests: XCTestCase {
         XCTAssertNotNil(properties["Features"], "GetAll should expose Features entry")
     }
 
+    func testProxyMetadataPropertyHelpers() throws {
+        let connection = try DBusConnection(bus: .session)
+        let proxy = makeBusProxy(connection)
+        let metadata = try proxy.metadata()
+
+        let featuresHandle = try metadata.property("Features", as: [String].self)
+        let features = try proxy.getProperty(featuresHandle)
+        XCTAssertNotNil(features, "metadata-backed property getter should decode value")
+
+        XCTAssertThrowsError(try metadata.property("Features", as: UInt32.self)) { error in
+            guard let metadataError = error as? DBusProxyMetadataError else {
+                return XCTFail("Unexpected error \(error)")
+            }
+            guard
+                case DBusProxyMetadataError.propertyTypeMismatch(
+                    let property,
+                    _,
+                    _
+                ) = metadataError
+            else {
+                return XCTFail("Unexpected metadata error \(metadataError)")
+            }
+            XCTAssertEqual(property, "Features")
+        }
+    }
+
+    func testProxyCachedMetadataLifecycle() throws {
+        let connection = try DBusConnection(bus: .session)
+        let caches = DBusProxyCaches(
+            propertyCache: nil,
+            introspectionCache: DBusIntrospectionCache()
+        )
+        let proxy = makeBusProxy(connection, caches: caches)
+
+        XCTAssertNil(proxy.cachedMetadata, "metadata cache should start empty")
+
+        let metadata = try proxy.metadata()
+        XCTAssertEqual(metadata.name, proxy.interface)
+        XCTAssertNotNil(proxy.cachedMetadata)
+
+        proxy.invalidateCachedMetadata()
+        XCTAssertNil(proxy.cachedMetadata, "cached metadata should be cleared after invalidation")
+    }
+
     func testProxyCallExpectingTypedStruct() throws {
         let connection = try DBusConnection(bus: .session)
         let proxy = makeBusProxy(connection)
@@ -142,6 +188,59 @@ final class ProxyTests: XCTestCase {
             XCTAssertEqual(values, refreshed)
         } else {
             XCTFail("Cache should contain refreshed value")
+        }
+    }
+
+    func testProxyInvalidateCachedPropertiesUsesConfiguredCache() throws {
+        let connection = try DBusConnection(bus: .session)
+        let propertyCache = DBusPropertyCache()
+        let proxy = makeBusProxy(
+            connection,
+            caches: DBusProxyCaches(propertyCache: propertyCache)
+        )
+
+        let features: [String] = try proxy.getProperty("Features")
+        XCTAssertNotNil(features)
+
+        let key = DBusPropertyKey(
+            destination: proxy.destination,
+            path: proxy.path,
+            interface: proxy.interface,
+            name: "Features"
+        )
+        XCTAssertNotNil(propertyCache.value(for: key))
+
+        proxy.invalidateCachedProperties("Features")
+        XCTAssertNil(propertyCache.value(for: key))
+    }
+
+    func testProxyMetadataMethodHelpers() throws {
+        let connection = try DBusConnection(bus: .session)
+        let proxy = makeBusProxy(connection)
+        let metadata = try proxy.metadata()
+
+        let listNamesHandle = try metadata.method("ListNames", returns: [String].self)
+        let names: [String] = try proxy.call(listNamesHandle)
+        XCTAssertFalse(names.isEmpty)
+
+        XCTAssertThrowsError(
+            try proxy.call(listNamesHandle, arguments: [.string("unexpected")])
+        ) { error in
+            guard let metadataError = error as? DBusProxyMetadataError else {
+                return XCTFail("Unexpected error \(error)")
+            }
+            guard
+                case DBusProxyMetadataError.methodArgumentCountMismatch(
+                    let method,
+                    let expected,
+                    let actual
+                ) = metadataError
+            else {
+                return XCTFail("Unexpected metadata error \(metadataError)")
+            }
+            XCTAssertEqual(method, "ListNames")
+            XCTAssertEqual(expected, 0)
+            XCTAssertEqual(actual, 1)
         }
     }
 }

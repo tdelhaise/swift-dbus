@@ -262,6 +262,40 @@ if let interfaceInfo = try proxy.introspectedInterface() {
     print("Signaux :", interfaceInfo.signals.map(\.name))
     print("Propriétés :", interfaceInfo.properties.map(\.name))
 }
+
+// Instancier un proxy avec caches partagés (propriétés + introspection).
+let caches = DBusProxyCaches(
+    propertyCache: DBusPropertyCache(),
+    introspectionCache: DBusIntrospectionCache()
+)
+let proxy = DBusProxy(
+    connection: connection,
+    destination: "org.freedesktop.DBus",
+    path: "/org/freedesktop/DBus",
+    interface: "org.freedesktop.DBus",
+    caches: caches
+)
+
+// APIs dérivées de l'introspection : propriétés, méthodes et signaux typés.
+let metadata = try proxy.metadata()
+let featuresHandle = try metadata.property("Features", as: [String].self)
+let features = try proxy.getProperty(featuresHandle)
+
+let listNames = try metadata.method("ListNames", returns: [String].self)
+let names: [String] = try proxy.call(listNames)
+
+let nameOwnerChanged = try metadata.signal(NameOwnerChangedSignal.self)
+let stream = try proxy.signals(nameOwnerChanged, arg0: "org.example.Service")
+
+// Accès au cache (pas de ré-introspection tant que non invalidé).
+if let cached = proxy.cachedMetadata {
+    print("Metadata en cache pour \(cached.name)")
+}
+proxy.invalidateCachedMetadata()
+
+// Helpers d'invalidation des propriétés.
+try proxy.autoInvalidateCachedPropertyCache()
+proxy.invalidateCachedProperties()
 ```
 
 ## CI (Ubuntu)

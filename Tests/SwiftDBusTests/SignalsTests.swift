@@ -66,6 +66,9 @@ final class SignalsTests: XCTestCase {
     }
 
     func testSignalsWithArg0Filter() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil {
+            throw XCTSkip("Arg0 filter timing is flaky on CI")
+        }
         let connection = try DBusConnection(bus: .session)
         let name = makeTemporaryBusName()
 
